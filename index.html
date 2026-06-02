@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LED Mockup Studio — Multimac Hito Innovation</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{ --blue:#0a4a9e; --orange:#DC6339; --bg:#0a0a0a; --panel:#141414; --border:#2a2a2a; --muted:#666; --green:#3ddc84; }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:#e8e8e8;font-family:monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:16px;}
+  h1{font-family:'Bebas Neue';font-size:22px;letter-spacing:.04em;color:#fff;margin-bottom:2px;}
+  .sub{font-size:10px;color:var(--muted);letter-spacing:.15em;text-transform:uppercase;margin-bottom:16px;}
+  .layout{display:grid;grid-template-columns:300px 1fr;gap:16px;width:100%;max-width:1340px;}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px;}
+  .panel h2{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--orange);margin-bottom:10px;font-family:Barlow;font-weight:700;}
+  label{display:block;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:10px 0 5px;}
+  input[type=text],input[type=url],input[type=password],input[type=number],textarea,select{width:100%;background:#0e0e0e;border:1px solid #333;border-radius:5px;padding:7px 10px;color:#ccc;font-size:11px;font-family:monospace;outline:none;}
+  input:focus,textarea:focus,select:focus{border-color:var(--orange);}
+  .file-btn{display:block;text-align:center;padding:8px;border:1px dashed #444;background:#0e0e0e;color:#aaa;border-radius:5px;cursor:pointer;font-size:11px;transition:all .15s;}
+  .file-btn:hover{border-color:var(--orange);color:var(--orange);}
+  .file-btn input{display:none;}
+  .fname{font-size:10px;color:var(--green);margin-top:4px;word-break:break-all;}
+  button.act{padding:8px 12px;border:1px solid #444;background:#1a1a1a;color:#ccc;border-radius:5px;cursor:pointer;font-size:11px;font-family:monospace;transition:all .15s;}
+  button.act:hover{border-color:var(--orange);color:var(--orange);}
+  button.primary{width:100%;padding:11px;background:var(--orange);color:#fff;border:none;border-radius:6px;font-family:'Bebas Neue';font-size:15px;letter-spacing:.05em;cursor:pointer;margin-top:12px;transition:all .15s;}
+  button.primary:hover{filter:brightness(1.1);}
+  button.primary:disabled{opacity:.4;cursor:not-allowed;}
+  .stage-col{display:flex;flex-direction:column;align-items:center;}
+  .controls{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;justify-content:center;align-items:center;}
+  .info{font-size:11px;color:var(--muted);padding:6px 12px;border:1px solid #222;border-radius:4px;}
+  canvas{display:block;max-width:100%;box-shadow:0 16px 60px rgba(0,0,0,.85);border-radius:2px;}
+  .pos-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:12px;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:10px 12px;}
+  .pos-label{font-size:10px;color:var(--muted);}
+  .pos-row input[type=range]{width:80px;accent-color:var(--orange);}
+  .pos-row span:not(.pos-label){font-size:10px;color:#888;min-width:28px;}
+  .status{font-size:11px;color:var(--muted);min-height:15px;margin-top:8px;line-height:1.5;}
+  .status.ok{color:var(--green);} .status.err{color:#ff6b6b;}
+  .divider{border-top:1px solid var(--border);margin:14px 0;}
+  .overlay{display:none;position:fixed;inset:0;background:rgba(8,8,8,.94);z-index:99;flex-direction:column;align-items:center;justify-content:center;gap:18px;}
+  .overlay.on{display:flex;}
+  .ring{width:50px;height:50px;border:3px solid #333;border-top-color:var(--orange);border-radius:50%;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .ov-text{font-family:'Bebas Neue';font-size:18px;color:#fff;}
+  .ov-sub{font-size:11px;color:var(--muted);max-width:320px;text-align:center;line-height:1.6;}
+  video{max-width:400px;border-radius:6px;margin-top:8px;}
+</style>
+</head>
+<body>
+<h1>LED MOCKUP STUDIO</h1>
+<div class="sub">Multimac Hito Innovation · Ferramenta Interna</div>
+
+<div class="layout">
+  <!-- SIDEBAR -->
+  <div>
+    <div class="panel">
+      <h2>1 · Fachada</h2>
+      <label class="file-btn">📁 Carregar imagem da fachada
+        <input type="file" accept="image/*" onchange="onFacade(event)">
+      </label>
+      <div class="fname" id="facadeName"></div>
+      <label>Descreve onde vai o LED</label>
+      <input type="text" id="desc" placeholder="ex: painel central acima do portão">
+      <label>Chave API Anthropic (posicionamento IA)</label>
+      <input type="password" id="apiKey" placeholder="sk-ant-...">
+      <button class="act" style="width:100%;margin-top:8px;" onclick="aiPosition()">🤖 Posicionar com IA</button>
+      <div class="status" id="posStatus"></div>
+    </div>
+
+    <div class="panel" style="margin-top:14px;">
+      <h2>2 · Conteúdo dos Slides</h2>
+      <label>Imagem para incluir nos slides (opcional)</label>
+      <label class="file-btn">🖼 Carregar imagem (produto/obra)
+        <input type="file" accept="image/*" onchange="onSlideImg(event)">
+      </label>
+      <div class="fname" id="slideImgName"></div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">A imagem entra no slide de conteúdo, ao lado do texto.</div>
+    </div>
+
+    <div class="panel" style="margin-top:14px;">
+      <h2>2b · Gerar do Site do Cliente</h2>
+      <label>URL do site</label>
+      <input type="text" id="siteUrl" placeholder="ex: horaciocosta.pt">
+      <button class="act" style="width:100%;margin-top:8px;" onclick="crawlAndGenerate()" id="crawlBtn">🌐 Analisar site e gerar conteúdo</button>
+      <div class="status" id="crawlStatus"></div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">Faz crawl ao site, extrai serviços, contactos e cores, e o Claude adapta os slides automaticamente. Requer a chave API acima.</div>
+    </div>
+
+    <div class="panel" style="margin-top:14px;">
+      <h2>3 · Intro &amp; Fecho</h2>
+      <label class="file-btn">🎬 Vídeo de Intro (MP4)
+        <input type="file" accept="video/mp4" onchange="onIntro(event)">
+      </label>
+      <div class="fname" id="introName"></div>
+      <label class="file-btn" style="margin-top:8px;">🎬 Vídeo de Fecho (MP4)
+        <input type="file" accept="video/mp4" onchange="onOutro(event)">
+      </label>
+      <div class="fname" id="outroName"></div>
+    </div>
+
+    <div class="panel" style="margin-top:14px;">
+      <h2>4 · Exportar</h2>
+      <label>Resolução</label>
+      <select id="res">
+        <option value="1920x1080">1920 × 1080 (Full HD)</option>
+        <option value="1280x720">1280 × 720 (HD)</option>
+        <option value="3840x2160">3840 × 2160 (4K)</option>
+      </select>
+      <label>FPS</label>
+      <select id="fps"><option>30</option><option>25</option><option>24</option><option>60</option></select>
+      <button class="primary" onclick="exportPNG()">📸 Exportar Imagem (PNG)</button>
+      <button class="primary" style="background:var(--blue);" onclick="exportVideo()">🎥 Exportar Vídeo (MP4)</button>
+      <div class="status" id="exportStatus"></div>
+      <div id="videoResult"></div>
+    </div>
+  </div>
+
+  <!-- STAGE -->
+  <div class="stage-col">
+    <div class="controls">
+      <button class="act" onclick="prevSlide()">◀</button>
+      <button class="act" onclick="togglePlay()" id="playBtn">⏸ Pausar</button>
+      <button class="act" onclick="nextSlide()">▶</button>
+      <div class="info" id="slideInfo">Slide 1/4</div>
+    </div>
+    <canvas id="c"></canvas>
+    <div class="pos-row">
+      <span class="pos-label">X%</span><input type="range" min="0" max="90" step="0.2" value="19.5" oninput="upd('x',this.value)" id="slX"><span id="vX">19.5</span>
+      <span class="pos-label">Y%</span><input type="range" min="0" max="90" step="0.2" value="35.2" oninput="upd('y',this.value)" id="slY"><span id="vY">35.2</span>
+      <span class="pos-label">W%</span><input type="range" min="5" max="80" step="0.2" value="56" oninput="upd('w',this.value)" id="slW"><span id="vW">56</span>
+      <span class="pos-label">H%</span><input type="range" min="2" max="40" step="0.2" value="7.3" oninput="upd('h',this.value)" id="slH"><span id="vH">7.3</span>
+      <span class="pos-label">3D</span><input type="range" min="0" max="20" step="0.5" value="9" oninput="upd('d',this.value)" id="slD"><span id="vD">9</span>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="ring"></div>
+  <div class="ov-text" id="ovText">A renderizar vídeo...</div>
+  <div class="ov-sub" id="ovSub">A capturar frames e enviar para o servidor FFmpeg.</div>
+</div>
+
+<script>
+const DEFAULT_B64 = null; // imagem carregada pelo utilizador
+const FRAME=0.0025;
+const BLUE="#0a4a9e", ORANGE="#e8662a";
+window.BRAND_BLUE=null; window.BRAND_ORANGE=null;
+function BL(){return window.BRAND_BLUE||BLUE;} function OR(){return window.BRAND_ORANGE||ORANGE;}
+
+window.LX=0.195; window.LY=0.352; window.LW=0.56; window.LH=0.073; window.DEPTH=9;
+let bgImg=null, slideImg=null, current=0, playing=true, timer=null, animFrame=null, slideStart=0;
+let introBase64=null, outroBase64=null;
+let currentFacadeDataUrl=null;
+const canvas=document.getElementById("c"), ctx=canvas.getContext("2d");
+const DURATIONS=[5000,6500,7000,6000];
+
+// Sem imagem por defeito — utilizador carrega a fachada no painel 1
+// Mostra placeholder até carregar
+function showPlaceholder(){
+  canvas.width=900; canvas.height=506;
+  ctx.fillStyle="#141414"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle="#444"; ctx.textAlign="center"; ctx.font="20px Barlow";
+  ctx.fillText("Carrega a imagem da fachada no painel 1 →", canvas.width/2, canvas.height/2);
+  ctx.font="13px monospace"; ctx.fillStyle="#333";
+  ctx.fillText("Multimac Hito Innovation · LED Mockup Studio", canvas.width/2, canvas.height/2+30);
+}
+showPlaceholder();
+
+function setBg(imgEl, dataUrl){
+  bgImg=imgEl; currentFacadeDataUrl=dataUrl;
+  const maxW=Math.min(window.innerWidth-360,1000);
+  const s=maxW/imgEl.width;
+  canvas.width=imgEl.width*s; canvas.height=imgEl.height*s;
+  if(!animFrame){ startSlide(); animFrame=requestAnimationFrame(loop); }
+}
+
+function onFacade(e){ const f=e.target.files[0]; if(!f)return; document.getElementById('facadeName').textContent=f.name;
+  const r=new FileReader(); r.onload=ev=>{ const i=new Image(); i.onload=()=>setBg(i,ev.target.result); i.src=ev.target.result; }; r.readAsDataURL(f); }
+function onSlideImg(e){ const f=e.target.files[0]; if(!f)return; document.getElementById('slideImgName').textContent=f.name;
+  const r=new FileReader(); r.onload=ev=>{ const i=new Image(); i.onload=()=>{slideImg=i;}; i.src=ev.target.result; }; r.readAsDataURL(f); }
+function onIntro(e){ const f=e.target.files[0]; if(!f)return; document.getElementById('introName').textContent=f.name;
+  const r=new FileReader(); r.onload=ev=>{ introBase64=ev.target.result; }; r.readAsDataURL(f); }
+function onOutro(e){ const f=e.target.files[0]; if(!f)return; document.getElementById('outroName').textContent=f.name;
+  const r=new FileReader(); r.onload=ev=>{ outroBase64=ev.target.result; }; r.readAsDataURL(f); }
+
+function upd(a,v){ v=parseFloat(v);
+  if(a==='x'){window.LX=v/100;vX.textContent=v;} if(a==='y'){window.LY=v/100;vY.textContent=v;}
+  if(a==='w'){window.LW=v/100;vW.textContent=v;} if(a==='h'){window.LH=v/100;vH.textContent=v;}
+  if(a==='d'){window.DEPTH=v;vD.textContent=v;} }
+
+function startSlide(){ slideStart=performance.now(); slideInfo.textContent="Slide "+(current+1)+"/4"; clearTimeout(timer); if(playing)timer=setTimeout(nextSlide,DURATIONS[current]); }
+function nextSlide(){ current=(current+1)%4; startSlide(); }
+function prevSlide(){ clearTimeout(timer); current=(current-1+4)%4; startSlide(); }
+function togglePlay(){ playing=!playing; playBtn.textContent=playing?"⏸ Pausar":"▶ Reproduzir"; if(playing){timer=setTimeout(nextSlide,DURATIONS[current]);}else clearTimeout(timer); }
+
+function loop(ts){ if(!bgImg){animFrame=requestAnimationFrame(loop);return;} const t=Math.min((ts-slideStart)/DURATIONS[current],1); draw(t); animFrame=requestAnimationFrame(loop); }
+
+// AI positioning
+async function aiPosition(){
+  const desc=document.getElementById('desc').value.trim();
+  const key=document.getElementById('apiKey').value.trim();
+  const st=document.getElementById('posStatus');
+  if(!desc){st.textContent='⚠ Descreve onde vai o LED.';st.className='status err';return;}
+  if(!key){st.textContent='⚠ Introduz a chave API.';st.className='status err';return;}
+  if(!currentFacadeDataUrl){st.textContent='⚠ Carrega uma imagem.';st.className='status err';return;}
+  st.textContent='🤖 Claude a analisar...';st.className='status';
+  try{
+    const b64=currentFacadeDataUrl.split(',')[1];
+    const mime=currentFacadeDataUrl.split(';')[0].split(':')[1];
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:300,messages:[{role:'user',content:[
+        {type:'image',source:{type:'base64',media_type:mime,data:b64}},
+        {type:'text',text:'Analisa a imagem e indica onde colocar um LED 2:1. Utilizador: "'+desc+'". Responde APENAS JSON: {"x_pct":0.XX,"y_pct":0.XX,"w_pct":0.XX,"h_pct":0.XX,"reasoning":"frase"}. Valores 0-1 da largura/altura. Garante x+w<0.98, y+h<0.98.'}
+      ]}]})});
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||'Erro '+r.status);}
+    const d=await r.json(); const raw=d.content.find(b=>b.type==='text')?.text||'';
+    const p=JSON.parse(raw.replace(/```json|```/g,'').trim());
+    window.LX=p.x_pct;window.LY=p.y_pct;window.LW=p.w_pct;window.LH=p.h_pct;
+    ['X','Y','W','H'].forEach((ax,i)=>{const v=[p.x_pct,p.y_pct,p.w_pct,p.h_pct][i]*100;document.getElementById('sl'+ax).value=v.toFixed(1);document.getElementById('v'+ax).textContent=v.toFixed(1);});
+    st.textContent='✓ '+(p.reasoning||'Posicionado');st.className='status ok';
+  }catch(e){st.textContent='✗ '+e.message;st.className='status err';}
+}
+
+function draw(t){
+  const W=canvas.width,H=canvas.height;
+  ctx.drawImage(bgImg,0,0,W,H);
+  const lx=window.LX*W,ly=window.LY*H,lw=window.LW*W,lh=window.LH*H;
+  const fr=FRAME*W,dp=window.DEPTH*(W/1000);
+  ctx.save();ctx.shadowColor="rgba(0,0,0,0.6)";ctx.shadowBlur=lw*0.06;ctx.shadowOffsetX=dp*0.6;ctx.shadowOffsetY=dp*1.4;ctx.fillStyle="#000";ctx.fillRect(lx-fr,ly-fr,lw+fr*2,lh+fr*2);ctx.restore();
+  ctx.fillStyle="#0d0d0d";ctx.beginPath();ctx.moveTo(lx+lw+fr,ly-fr);ctx.lineTo(lx+lw+fr+dp,ly-fr+dp);ctx.lineTo(lx+lw+fr+dp,ly+lh+fr+dp);ctx.lineTo(lx+lw+fr,ly+lh+fr);ctx.closePath();ctx.fill();
+  ctx.fillStyle="#161616";ctx.beginPath();ctx.moveTo(lx-fr,ly+lh+fr);ctx.lineTo(lx-fr+dp,ly+lh+fr+dp);ctx.lineTo(lx+lw+fr+dp,ly+lh+fr+dp);ctx.lineTo(lx+lw+fr,ly+lh+fr);ctx.closePath();ctx.fill();
+  const fg=ctx.createLinearGradient(lx,ly-fr,lx,ly+lh+fr);fg.addColorStop(0,"#2e2e2e");fg.addColorStop(0.5,"#222");fg.addColorStop(1,"#141414");
+  ctx.fillStyle=fg;ctx.fillRect(lx-fr,ly-fr,lw+fr*2,lh+fr*2);ctx.fillStyle="#000";ctx.fillRect(lx,ly,lw,lh);
+  ctx.strokeStyle="rgba(255,255,255,0.06)";ctx.lineWidth=0.5;ctx.strokeRect(lx-fr+0.5,ly-fr+0.5,lw+fr*2-1,lh+fr*2-1);
+  ctx.strokeStyle="rgba(0,0,0,0.55)";ctx.strokeRect(lx-fr+1.5,ly-fr+1.5,lw+fr*2-3,lh+fr*2-3);
+  ctx.save();ctx.beginPath();ctx.rect(lx,ly,lw,lh);ctx.clip();[s1,s2,s3,s4][current](lx,ly,lw,lh,t);ctx.restore();
+  const gg=ctx.createRadialGradient(lx+lw/2,ly+lh+fr,0,lx+lw/2,ly+lh+fr,lw*0.5);gg.addColorStop(0,"rgba(40,90,160,0.06)");gg.addColorStop(1,"rgba(0,0,0,0)");ctx.fillStyle=gg;ctx.fillRect(lx-lw*0.2,ly+lh,lw*1.4,lw*0.4);
+}
+function ease(t){return t<0.5?2*t*t:-1+(4-2*t)*t;} function fIn(t,d,u){return Math.max(0,Math.min(1,(t-d)/u));}
+
+function s1(x,y,w,h,t){ctx.fillStyle=BL();ctx.fillRect(x,y,w,h);
+  const sc=window.siteContent;
+  const brand=(sc&&sc.brand)?sc.brand.toUpperCase():"HORÁCIO COSTA";
+  const tag=(sc&&sc.tagline)?sc.tagline.toUpperCase():"FABRICANTE";
+  ctx.fillStyle="rgba(255,255,255,0.04)";ctx.beginPath();ctx.moveTo(x+w*0.6,y);ctx.lineTo(x+w,y);ctx.lineTo(x+w,y+h);ctx.lineTo(x+w*0.75,y+h);ctx.closePath();ctx.fill();
+  const f1=ease(fIn(t,0.05,0.3)),f2=ease(fIn(t,0.2,0.35)),f3=ease(fIn(t,0.4,0.3));
+  ctx.globalAlpha=f1;ctx.strokeStyle="#fff";ctx.lineWidth=h*0.04;ctx.lineCap="round";
+  const cx=x+w*0.16,cy=y+h*0.5,r=h*0.28;ctx.beginPath();ctx.arc(cx,cy,r,Math.PI*0.6,Math.PI*1.4,false);ctx.stroke();ctx.beginPath();ctx.moveTo(cx+r*0.5,cy);ctx.lineTo(cx+r*1.3,cy);ctx.stroke();
+  ctx.globalAlpha=f2;ctx.textAlign="left";ctx.fillStyle="#fff";
+  let fs=h*0.32; ctx.font=`normal ${fs}px "Bebas Neue"`;
+  while(ctx.measureText(brand).width>w*0.68&&fs>h*0.12){fs-=h*0.01;ctx.font=`normal ${fs}px "Bebas Neue"`;}
+  ctx.letterSpacing="0.02em";ctx.fillText(brand,x+w*0.28,y+h*0.55);
+  ctx.globalAlpha=f3;ctx.fillStyle=OR();ctx.font=`700 ${h*0.13}px Barlow`;ctx.letterSpacing="0.15em";const pw=ctx.measureText(tag).width+h*0.3;ctx.fillRect(x+w*0.28,y+h*0.72,pw,h*0.2);ctx.fillStyle="#fff";ctx.fillText(tag,x+w*0.28+h*0.15,y+h*0.86);
+  ctx.globalAlpha=1;ctx.letterSpacing="0";}
+
+function s2(x,y,w,h,t){ctx.fillStyle="#fff";ctx.fillRect(x,y,w,h);ctx.fillStyle=BL();ctx.fillRect(x,y,w,h*0.16);
+  ctx.fillStyle="#fff";ctx.textAlign="left";ctx.font=`700 ${h*0.1}px Barlow`;ctx.letterSpacing="0.2em";ctx.fillText("AS NOSSAS SOLUÇÕES",x+w*0.03,y+h*0.115);
+  const sc=window.siteContent;
+  let svc=(sc&&sc.services&&sc.services.length)?sc.services.slice(0,4).map(s=>s.toUpperCase()):["TECTOS FALSOS","PAVIMENTOS","DIVISÓRIAS","FACHADAS"];
+  const cw=w/svc.length;
+  svc.forEach((s,i)=>{const f=ease(fIn(t,0.1+i*0.12,0.35)),cx=x+cw*i;ctx.globalAlpha=f;
+    if(i>0){ctx.fillStyle="#ddd";ctx.fillRect(cx,y+h*0.28,1,h*0.6);}
+    ctx.fillStyle=OR();ctx.font=`normal ${h*0.3}px "Bebas Neue"`;ctx.textAlign="center";ctx.fillText("0"+(i+1),cx+cw/2,y+h*0.56);
+    ctx.fillStyle=BL();let fs=h*0.11;ctx.font=`800 ${fs}px "Barlow Condensed"`;
+    while(ctx.measureText(s).width>cw*0.9&&fs>h*0.06){fs-=h*0.008;ctx.font=`800 ${fs}px "Barlow Condensed"`;}
+    ctx.letterSpacing="0.02em";ctx.fillText(s,cx+cw/2,y+h*0.82);ctx.globalAlpha=1;});
+  ctx.letterSpacing="0";ctx.textAlign="left";}
+
+// Slide 3 — now supports optional image
+function s3(x,y,w,h,t){ctx.fillStyle="#f4f4f4";ctx.fillRect(x,y,w,h);
+  const f0=ease(fIn(t,0.02,0.2));ctx.globalAlpha=f0;ctx.fillStyle=BL();ctx.textAlign="center";ctx.font=`700 ${h*0.11}px Barlow`;ctx.letterSpacing="0.15em";
+  ctx.fillText("PARCEIROS DE REFERÊNCIA",x+w/2,y+h*0.18);ctx.globalAlpha=1;
+  if(slideImg){
+    // Image on right half, brands on left
+    const imgW=w*0.4,imgH=h*0.62,imgX=x+w*0.55,imgY=y+h*0.28;
+    const f=ease(fIn(t,0.15,0.4));ctx.globalAlpha=f;
+    // cover-fit
+    const ar=slideImg.width/slideImg.height, tar=imgW/imgH; let sw,sh,sx,sy;
+    if(ar>tar){sh=slideImg.height;sw=sh*tar;sx=(slideImg.width-sw)/2;sy=0;}else{sw=slideImg.width;sh=sw/tar;sx=0;sy=(slideImg.height-sh)/2;}
+    ctx.drawImage(slideImg,sx,sy,sw,sh,imgX,imgY,imgW,imgH);ctx.globalAlpha=1;
+    const sc2=window.siteContent; const brands=(sc2&&sc2.partners&&sc2.partners.length)?sc2.partners.slice(0,4):["HunterDouglas","BARRISOL","Rockfon","Isover"];
+    brands.forEach((b,i)=>{const ff=ease(fIn(t,0.2+i*0.1,0.3));ctx.globalAlpha=ff;ctx.fillStyle="#222";ctx.textAlign="left";ctx.font=`600 ${h*0.1}px Barlow`;ctx.fillText(b,x+w*0.05,y+h*0.4+i*h*0.15);ctx.globalAlpha=1;});
+  } else {
+    const sc=window.siteContent;
+    const brands=(sc&&sc.partners&&sc.partners.length)?sc.partners.slice(0,8):["HunterDouglas","BARRISOL","Gradhermetic","NBK","Maxparete","Rockfon","Pladur","Isover"];
+    const cols=4,gw=w/cols,gh=h*0.6/2;
+    brands.forEach((b,i)=>{const f=ease(fIn(t,0.15+i*0.07,0.3)),col=i%cols,row=Math.floor(i/cols),bx=x+gw*col+gw/2,by=y+h*0.32+gh*row+gh/2;
+      ctx.globalAlpha=f;ctx.fillStyle="#222";ctx.textAlign="center";ctx.font=`600 ${h*0.1}px Barlow`;ctx.fillText(b,bx,by);ctx.globalAlpha=1;});
+  }
+  ctx.letterSpacing="0";ctx.textAlign="left";}
+
+function s4(x,y,w,h,t){ctx.fillStyle=OR();ctx.fillRect(x,y,w,h);
+  const sc=window.siteContent;
+  const brand=(sc&&sc.brand)?sc.brand.toUpperCase():"HORÁCIO COSTA";
+  const cta=(sc&&sc.cta)?sc.cta.toUpperCase():"O SEU PROJETO COMEÇA AQUI";
+  const contact=(sc&&sc.contact)?sc.contact:"www.horaciocosta.pt   ·   +351 000 000 000";
+  ctx.globalAlpha=0.1;ctx.fillStyle="#000";ctx.font=`normal ${h*0.7}px "Bebas Neue"`;ctx.textAlign="right";ctx.fillText(brand,x+w*0.98,y+h*0.82);ctx.globalAlpha=1;
+  const f1=ease(fIn(t,0.05,0.3)),f2=ease(fIn(t,0.25,0.3)),f3=ease(fIn(t,0.5,0.3));ctx.textAlign="left";
+  ctx.globalAlpha=f1;ctx.fillStyle="rgba(255,255,255,0.7)";ctx.font=`300 ${h*0.1}px Barlow`;ctx.letterSpacing="0.25em";ctx.fillText("FALE CONNOSCO",x+w*0.05,y+h*0.28);
+  ctx.globalAlpha=f2;ctx.fillStyle="#fff";let fs=h*0.26;ctx.font=`800 ${fs}px "Barlow Condensed"`;
+  while(ctx.measureText(cta).width>w*0.9&&fs>h*0.12){fs-=h*0.01;ctx.font=`800 ${fs}px "Barlow Condensed"`;}
+  ctx.letterSpacing="0.01em";ctx.fillText(cta,x+w*0.05,y+h*0.6);
+  ctx.globalAlpha=f3;ctx.fillStyle="#fff";ctx.font=`600 ${h*0.1}px Barlow`;ctx.letterSpacing="0.05em";ctx.fillText(contact,x+w*0.05,y+h*0.85);
+  ctx.globalAlpha=1;ctx.letterSpacing="0";}
+
+// ── CRAWL SITE + GENERATE CONTENT ──────────────────────────────
+window.siteContent = null; // {brand, tagline, services:[], partners:[], contacts:{}, colors:{}}
+
+async function crawlAndGenerate(){
+  const url=document.getElementById('siteUrl').value.trim();
+  const key=document.getElementById('apiKey').value.trim();
+  const st=document.getElementById('crawlStatus');
+  const btn=document.getElementById('crawlBtn');
+  if(!url){st.textContent='⚠ Introduz o URL do site.';st.className='status err';return;}
+  if(!key){st.textContent='⚠ Introduz a chave API Anthropic (painel 1).';st.className='status err';return;}
+
+  btn.disabled=true; st.textContent='🌐 A analisar o site...'; st.className='status';
+  try{
+    // 1. Crawl via serverless
+    const cr=await fetch('/api/crawl-site',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    if(!cr.ok){const e=await cr.json().catch(()=>({}));throw new Error(e.error||'Erro crawl '+cr.status);}
+    const site=await cr.json();
+
+    st.textContent='🤖 Claude a adaptar o conteúdo...';
+
+    // 2. Claude generates slide content from crawled data
+    const sys=`És um especialista em conteúdo para ecrãs LED. Recebes informação extraída do site de uma empresa e devolves conteúdo para 4 slides. Responde APENAS com JSON válido, sem markdown:
+{
+  "brand": "nome da empresa",
+  "tagline": "slogan curto (máx 3 palavras)",
+  "services": ["serviço 1","serviço 2","serviço 3","serviço 4"],
+  "partners": ["marca 1","marca 2","marca 3","marca 4","marca 5","marca 6"],
+  "cta": "call-to-action (máx 5 palavras)",
+  "contact": "website · telefone",
+  "blue": "#hexcode cor institucional principal do site",
+  "orange": "#hexcode cor de destaque/secundária do site"
+}`;
+    const usr=`Informação extraída do site:\n${site.summary}\n\nCores detectadas: ${(site.colors||[]).join(', ')}\nTheme color: ${site.themeColor||'n/a'}\n\nGera o conteúdo dos slides adaptado a esta empresa.`;
+
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,system:sys,messages:[{role:'user',content:usr}]})});
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||'Erro Claude '+r.status);}
+    const d=await r.json();
+    const raw=d.content.find(b=>b.type==='text')?.text||'';
+    const gen=JSON.parse(raw.replace(/```json|```/g,'').trim());
+
+    // 3. Store and apply
+    window.siteContent=gen;
+    if(gen.blue) window.BRAND_BLUE=gen.blue;
+    if(gen.orange) window.BRAND_ORANGE=gen.orange;
+
+    st.textContent='✓ Conteúdo gerado para '+(gen.brand||'cliente')+' — slides actualizados';st.className='status ok';
+  }catch(e){
+    st.textContent='✗ '+e.message;st.className='status err';
+  }finally{ btn.disabled=false; }
+}
+// ── END CRAWL ──────────────────────────────────────────────────
+
+function exportPNG(){const l=document.createElement("a");l.download="led-mockup.png";l.href=canvas.toDataURL("image/png");l.click();}
+
+// ── VIDEO EXPORT ──────────────────────────────────────────────
+async function exportVideo(){
+  const ov=document.getElementById('overlay');const st=document.getElementById('exportStatus');
+  const wasPlaying=playing; playing=false; clearTimeout(timer);
+  ov.classList.add('on');
+  document.getElementById('ovText').textContent='A capturar frames...';
+  document.getElementById('ovSub').textContent='A gerar a sequência de slides.';
+  try{
+    const fps=parseInt(document.getElementById('fps').value);
+    const [vw,vh]=document.getElementById('res').value.split('x').map(Number);
+    // Capture frames: walk through each slide's animation
+    const frames=[]; const totalMs=DURATIONS.reduce((a,b)=>a+b,0);
+    const frameInterval=1000/fps;
+    for(let s=0;s<4;s++){
+      current=s;
+      const dur=DURATIONS[s];
+      for(let ms=0;ms<dur;ms+=frameInterval){
+        const t=Math.min(ms/dur,1);
+        draw(t);
+        frames.push(canvas.toDataURL('image/jpeg',0.85));
+      }
+    }
+    document.getElementById('ovText').textContent='A renderizar no servidor...';
+    document.getElementById('ovSub').textContent=`${frames.length} frames · FFmpeg a concatenar intro/fecho.`;
+
+    const resp=await fetch('/api/render-video',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({frames,fps,introBase64,outroBase64,width:vw,height:vh})});
+    if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error||'Erro '+resp.status);}
+    const data=await resp.json();
+    const a=document.createElement('a');a.href=data.video;a.download='led-mockup-video.mp4';a.click();
+    document.getElementById('videoResult').innerHTML='<video controls src="'+data.video+'"></video>';
+    st.textContent='✓ Vídeo gerado ('+(data.size/1e6).toFixed(1)+' MB)';st.className='status ok';
+  }catch(e){
+    st.textContent='✗ '+e.message+' — verifica se o backend FFmpeg está em produção.';st.className='status err';
+  }finally{
+    ov.classList.remove('on'); playing=wasPlaying; if(playing){startSlide();}
+  }
+}
+</script>
+</body>
+</html>

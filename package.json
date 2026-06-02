@@ -1,0 +1,11 @@
+{
+  "name": "led-mockup-studio",
+  "version": "1.0.0",
+  "description": "Gerador de mockups LED para fachadas — Multimac Hito Innovation",
+  "private": true,
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "formidable": "^3.5.1"
+  }
+}
