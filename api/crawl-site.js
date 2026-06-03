@@ -94,9 +94,10 @@ export default async function handler(req, res) {
       .filter(e => !e.includes('.png') && !e.includes('.jpg')))].slice(0, 3);
     const phones = [...new Set((html.match(/(?:\+351\s?)?(?:\d{3}\s?\d{3}\s?\d{3})/g) || []))].slice(0, 3);
 
-    // Cores hex do CSS inline
-    const colors = [...new Set((html.match(/#[0-9a-fA-F]{6}/g) || []))]
-      .filter(c => c !== '#ffffff' && c !== '#000000' && c.toLowerCase() !== '#fff')
+    // Cores hex do CSS inline (suporta 3 ou 6 dígitos)
+    const colors = [...new Set((html.match(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})/g) || []))]
+      .map(c => c.toLowerCase())
+      .filter(c => c !== '#ffffff' && c !== '#000000' && c !== '#fff')
       .slice(0, 8);
 
     // Favicon

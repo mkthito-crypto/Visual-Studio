@@ -4,9 +4,9 @@
     "api/render-video.js": {
       "maxDuration": 60,
       "memory": 3008
+    },
+    "api/crawl-site.js": {
+      "maxDuration": 30
     }
-  },
-  "rewrites": [
-    { "source": "/", "destination": "/index.html" }
-  ]
+  }
 }

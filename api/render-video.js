@@ -56,17 +56,21 @@ export default async function handler(req, res) {
     });
 
     // 2. Frames -> vídeo dos slides
+    // framerate é opção de INPUT (antes do input). scale garante dimensões pares.
     const slidesVideo = path.join(workDir, 'slides.mp4');
+    const evenW = width % 2 === 0 ? width : width + 1;
+    const evenH = height % 2 === 0 ? height : height + 1;
     await run(
       ffmpeg()
         .input(path.join(workDir, 'frame_%05d.png'))
-        .inputOptions([`-framerate ${fps}`])
+        .inputFPS(fps)
         .videoCodec('libx264')
         .outputOptions([
           '-pix_fmt yuv420p',
-          `-vf scale=${width}:${height}`,
+          `-vf scale=${evenW}:${evenH}:force_original_aspect_ratio=decrease,pad=${evenW}:${evenH}:(ow-iw)/2:(oh-ih)/2`,
           '-preset fast',
-          '-crf 18'
+          '-crf 18',
+          `-r ${fps}`
         ])
         .output(slidesVideo)
     );

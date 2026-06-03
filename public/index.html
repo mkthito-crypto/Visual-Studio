@@ -75,6 +75,13 @@
       </label>
       <div class="fname" id="slideImgName"></div>
       <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">A imagem entra no slide de conteúdo, ao lado do texto.</div>
+      <div class="divider"></div>
+      <label>Camada de oclusão (elementos à frente do LED)</label>
+      <label class="file-btn">🌳 Carregar PNG com transparência
+        <input type="file" accept="image/png" onchange="onOcclusion(event)">
+      </label>
+      <div class="fname" id="occName"></div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">PNG com fundo transparente contendo só os elementos que ficam À FRENTE do LED (árvores, postes, pessoas). É desenhado por cima.</div>
     </div>
 
     <div class="panel" style="margin-top:14px;">
@@ -130,6 +137,7 @@
       <span class="pos-label">W%</span><input type="range" min="5" max="80" step="0.2" value="56" oninput="upd('w',this.value)" id="slW"><span id="vW">56</span>
       <span class="pos-label">H%</span><input type="range" min="2" max="40" step="0.2" value="7.3" oninput="upd('h',this.value)" id="slH"><span id="vH">7.3</span>
       <span class="pos-label">3D</span><input type="range" min="0" max="20" step="0.5" value="9" oninput="upd('d',this.value)" id="slD"><span id="vD">9</span>
+      <button class="act" style="padding:5px 10px;" onclick="togglePersp()" id="perspBtn">⟁ Perspetiva</button>
     </div>
   </div>
 </div>
@@ -147,11 +155,72 @@ const BLUE="#0a4a9e", ORANGE="#e8662a";
 window.BRAND_BLUE=null; window.BRAND_ORANGE=null;
 function BL(){return window.BRAND_BLUE||BLUE;} function OR(){return window.BRAND_ORANGE||ORANGE;}
 
+function getCorners(W,H){
+  if(window.persp){
+    return {
+      tl:[window.persp.tl[0]*W, window.persp.tl[1]*H],
+      tr:[window.persp.tr[0]*W, window.persp.tr[1]*H],
+      br:[window.persp.br[0]*W, window.persp.br[1]*H],
+      bl:[window.persp.bl[0]*W, window.persp.bl[1]*H]
+    };
+  }
+  const lx=window.LX*W, ly=window.LY*H, lw=window.LW*W, lh=window.LH*H;
+  return { tl:[lx,ly], tr:[lx+lw,ly], br:[lx+lw,ly+lh], bl:[lx,ly+lh] };
+}
+
+// Draw an image (the rendered LED slide) mapped onto 4 corners via triangle subdivision
+function drawPerspImage(src, corners){
+  // src is a canvas with the slide. Map to quad using 2 triangles affine approximation grid.
+  const N=12; // subdivisions for smoother perspective
+  const sw=src.width, sh=src.height;
+  function lerp(a,b,t){return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];}
+  for(let i=0;i<N;i++){
+    for(let j=0;j<N;j++){
+      const u0=i/N,u1=(i+1)/N,v0=j/N,v1=(j+1)/N;
+      // dest points (bilinear on quad)
+      const top0=lerp(corners.tl,corners.tr,u0), bot0=lerp(corners.bl,corners.br,u0);
+      const top1=lerp(corners.tl,corners.tr,u1), bot1=lerp(corners.bl,corners.br,u1);
+      const d00=lerp(top0,bot0,v0), d10=lerp(top1,bot1,v0), d01=lerp(top0,bot0,v1), d11=lerp(top1,bot1,v1);
+      // src rect
+      const sx=u0*sw, sy=v0*sh, sdw=(u1-u0)*sw, sdh=(v1-v0)*sh;
+      // draw via two triangles
+      drawTri(src, [sx,sy],[sx+sdw,sy],[sx,sy+sdh], d00,d10,d01);
+      drawTri(src, [sx+sdw,sy],[sx,sy+sdh],[sx+sdw,sy+sdh], d10,d01,d11);
+    }
+  }
+}
+function drawTri(img, s0,s1,s2, d0,d1,d2){
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(d0[0],d0[1]);ctx.lineTo(d1[0],d1[1]);ctx.lineTo(d2[0],d2[1]);ctx.closePath();ctx.clip();
+  // affine transform mapping src triangle -> dest triangle
+  const denom=(s1[0]-s0[0])*(s2[1]-s0[1])-(s2[0]-s0[0])*(s1[1]-s0[1]);
+  if(Math.abs(denom)<1e-6){ctx.restore();return;}
+  const a=((d1[0]-d0[0])*(s2[1]-s0[1])-(d2[0]-d0[0])*(s1[1]-s0[1]))/denom;
+  const b=((d2[0]-d0[0])*(s1[0]-s0[0])-(d1[0]-d0[0])*(s2[0]-s0[0]))/denom;
+  const cc=((d1[1]-d0[1])*(s2[1]-s0[1])-(d2[1]-d0[1])*(s1[1]-s0[1]))/denom;
+  const d=((d2[1]-d0[1])*(s1[0]-s0[0])-(d1[1]-d0[1])*(s2[0]-s0[0]))/denom;
+  const e=d0[0]-a*s0[0]-b*s0[1];
+  const f=d0[1]-cc*s0[0]-d*s0[1];
+  ctx.setTransform(a,cc,b,d,e,f);
+  ctx.drawImage(img,0,0);
+  ctx.restore();
+}
+
 window.LX=0.195; window.LY=0.352; window.LW=0.56; window.LH=0.073; window.DEPTH=9;
+// Perspective: 4 corners (normalized 0-1). Derived from LX/LY/LW/LH initially.
+window.persp=null; // {tl:[x,y],tr:[],br:[],bl:[]} when active
+window.perspMode=false;
+window.occlusionImg=null; // image with transparency painted over LED (trees/poles in front)
+let dragCorner=null;
 let bgImg=null, slideImg=null, current=0, playing=true, timer=null, animFrame=null, slideStart=0;
 let introBase64=null, outroBase64=null;
 let currentFacadeDataUrl=null;
-const canvas=document.getElementById("c"), ctx=canvas.getContext("2d");
+const canvas=document.getElementById("c");
+let ctx=canvas.getContext("2d");
+const _mainCtx=ctx;
+const _ctxStack=[];
+function setActiveCtx(c2){ ctx=c2; }
 const DURATIONS=[5000,6500,7000,6000];
 
 // Sem imagem por defeito — utilizador carrega a fachada no painel 1
@@ -223,19 +292,100 @@ async function aiPosition(){
 
 function draw(t){
   const W=canvas.width,H=canvas.height;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,W,H);
   ctx.drawImage(bgImg,0,0,W,H);
-  const lx=window.LX*W,ly=window.LY*H,lw=window.LW*W,lh=window.LH*H;
-  const fr=FRAME*W,dp=window.DEPTH*(W/1000);
-  ctx.save();ctx.shadowColor="rgba(0,0,0,0.6)";ctx.shadowBlur=lw*0.06;ctx.shadowOffsetX=dp*0.6;ctx.shadowOffsetY=dp*1.4;ctx.fillStyle="#000";ctx.fillRect(lx-fr,ly-fr,lw+fr*2,lh+fr*2);ctx.restore();
-  ctx.fillStyle="#0d0d0d";ctx.beginPath();ctx.moveTo(lx+lw+fr,ly-fr);ctx.lineTo(lx+lw+fr+dp,ly-fr+dp);ctx.lineTo(lx+lw+fr+dp,ly+lh+fr+dp);ctx.lineTo(lx+lw+fr,ly+lh+fr);ctx.closePath();ctx.fill();
-  ctx.fillStyle="#161616";ctx.beginPath();ctx.moveTo(lx-fr,ly+lh+fr);ctx.lineTo(lx-fr+dp,ly+lh+fr+dp);ctx.lineTo(lx+lw+fr+dp,ly+lh+fr+dp);ctx.lineTo(lx+lw+fr,ly+lh+fr);ctx.closePath();ctx.fill();
-  const fg=ctx.createLinearGradient(lx,ly-fr,lx,ly+lh+fr);fg.addColorStop(0,"#2e2e2e");fg.addColorStop(0.5,"#222");fg.addColorStop(1,"#141414");
-  ctx.fillStyle=fg;ctx.fillRect(lx-fr,ly-fr,lw+fr*2,lh+fr*2);ctx.fillStyle="#000";ctx.fillRect(lx,ly,lw,lh);
-  ctx.strokeStyle="rgba(255,255,255,0.06)";ctx.lineWidth=0.5;ctx.strokeRect(lx-fr+0.5,ly-fr+0.5,lw+fr*2-1,lh+fr*2-1);
-  ctx.strokeStyle="rgba(0,0,0,0.55)";ctx.strokeRect(lx-fr+1.5,ly-fr+1.5,lw+fr*2-3,lh+fr*2-3);
-  ctx.save();ctx.beginPath();ctx.rect(lx,ly,lw,lh);ctx.clip();[s1,s2,s3,s4][current](lx,ly,lw,lh,t);ctx.restore();
-  const gg=ctx.createRadialGradient(lx+lw/2,ly+lh+fr,0,lx+lw/2,ly+lh+fr,lw*0.5);gg.addColorStop(0,"rgba(40,90,160,0.06)");gg.addColorStop(1,"rgba(0,0,0,0)");ctx.fillStyle=gg;ctx.fillRect(lx-lw*0.2,ly+lh,lw*1.4,lw*0.4);
+
+  const corners=getCorners(W,H);
+  const fr=FRAME*W, dp=window.DEPTH*(W/1000);
+
+  // bounding box of the quad (for frame/shadow approximation)
+  const xs=[corners.tl[0],corners.tr[0],corners.br[0],corners.bl[0]];
+  const ys=[corners.tl[1],corners.tr[1],corners.br[1],corners.bl[1]];
+  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  const bw=maxX-minX, bh=maxY-minY;
+
+  // Drop shadow (quad)
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,0.55)";ctx.shadowBlur=bw*0.05;ctx.shadowOffsetX=dp*0.6;ctx.shadowOffsetY=dp*1.4;
+  ctx.fillStyle="#000";
+  quadPath(corners,-fr); ctx.fill();
+  ctx.restore();
+
+  // 3D extrusion faces (right + bottom) following the quad edges
+  ctx.fillStyle="#0d0d0d";
+  ctx.beginPath();
+  ctx.moveTo(corners.tr[0],corners.tr[1]);
+  ctx.lineTo(corners.tr[0]+dp,corners.tr[1]+dp);
+  ctx.lineTo(corners.br[0]+dp,corners.br[1]+dp);
+  ctx.lineTo(corners.br[0],corners.br[1]);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle="#161616";
+  ctx.beginPath();
+  ctx.moveTo(corners.bl[0],corners.bl[1]);
+  ctx.lineTo(corners.bl[0]+dp,corners.bl[1]+dp);
+  ctx.lineTo(corners.br[0]+dp,corners.br[1]+dp);
+  ctx.lineTo(corners.br[0],corners.br[1]);
+  ctx.closePath();ctx.fill();
+
+  // Frame (thin dark) — slightly expanded quad
+  ctx.fillStyle="#222";
+  quadPath(corners,-fr); ctx.fill();
+
+  // Render the slide content to an offscreen canvas at fixed res, then warp onto quad
+  const SW=1200, SH=Math.round(SW*(bh/bw||0.5));
+  if(!window._slideBuf){window._slideBuf=document.createElement('canvas');}
+  const buf=window._slideBuf; buf.width=SW; buf.height=SH;
+  const bctx=buf.getContext('2d');
+  // temporarily render slide into buffer using same renderers (they take ctx)
+  const realCtx=ctx; window._renderToBuf(bctx,SW,SH,t);
+
+  drawPerspImage(buf, corners);
+  ctx.setTransform(1,0,0,1,0,0);
+
+  // Occlusion layer — elements painted in front (trees/poles/people)
+  if(window.occlusionImg){
+    ctx.drawImage(window.occlusionImg,0,0,W,H);
+  }
+
+  // Projected glow below
+  ctx.fillStyle="rgba(40,90,160,0.05)";
+  const cxm=(corners.bl[0]+corners.br[0])/2, cym=(corners.bl[1]+corners.br[1])/2;
+  const gg=ctx.createRadialGradient(cxm,cym,0,cxm,cym,bw*0.5);
+  gg.addColorStop(0,"rgba(40,90,160,0.06)");gg.addColorStop(1,"rgba(0,0,0,0)");
+  ctx.fillStyle=gg; ctx.fillRect(minX-bw*0.2,maxY,bw*1.4,bw*0.4);
+
+  // Draw corner handles in perspective mode
+  if(window.perspMode){
+    [corners.tl,corners.tr,corners.br,corners.bl].forEach((p,i)=>{
+      ctx.beginPath();ctx.arc(p[0],p[1],8,0,Math.PI*2);
+      ctx.fillStyle="#DC6339";ctx.fill();ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();
+      ctx.fillStyle="#fff";ctx.font="10px monospace";ctx.textAlign="center";
+      ctx.fillText(["TL","TR","BR","BL"][i],p[0],p[1]-12);
+    });
+  }
 }
+
+function quadPath(c,expand){
+  // expand outward by 'expand' px (negative = outward for frame)
+  const e=expand||0;
+  ctx.beginPath();
+  ctx.moveTo(c.tl[0]-e,c.tl[1]-e);
+  ctx.lineTo(c.tr[0]+e,c.tr[1]-e);
+  ctx.lineTo(c.br[0]+e,c.br[1]+e);
+  ctx.lineTo(c.bl[0]-e,c.bl[1]+e);
+  ctx.closePath();
+}
+
+// Render current slide into an arbitrary context/size (for the perspective buffer)
+window._renderToBuf=function(bctx,W,H,t){
+  const origCtx=ctx;
+  setActiveCtx(bctx);
+  bctx.setTransform(1,0,0,1,0,0);
+  [s1,s2,s3,s4][current](0,0,W,H,t);
+  setActiveCtx(origCtx);
+};
+
 function ease(t){return t<0.5?2*t*t:-1+(4-2*t)*t;} function fIn(t,d,u){return Math.max(0,Math.min(1,(t-d)/u));}
 
 function s1(x,y,w,h,t){ctx.fillStyle=BL();ctx.fillRect(x,y,w,h);
@@ -303,6 +453,47 @@ function s4(x,y,w,h,t){ctx.fillStyle=OR();ctx.fillRect(x,y,w,h);
   ctx.globalAlpha=f3;ctx.fillStyle="#fff";ctx.font=`600 ${h*0.1}px Barlow`;ctx.letterSpacing="0.05em";ctx.fillText(contact,x+w*0.05,y+h*0.85);
   ctx.globalAlpha=1;ctx.letterSpacing="0";}
 
+// ── PERSPETIVA + OCLUSÃO ───────────────────────────────────────
+function togglePersp(){
+  window.perspMode=!window.perspMode;
+  document.getElementById('perspBtn').style.background=window.perspMode?'#DC6339':'';
+  document.getElementById('perspBtn').style.color=window.perspMode?'#fff':'';
+  if(window.perspMode && !window.persp){
+    // initialize corners from current rect
+    window.persp={ tl:[window.LX,window.LY], tr:[window.LX+window.LW,window.LY],
+      br:[window.LX+window.LW,window.LY+window.LH], bl:[window.LX,window.LY+window.LH] };
+  }
+}
+
+function onOcclusion(e){
+  const f=e.target.files[0]; if(!f)return;
+  document.getElementById('occName').textContent=f.name;
+  const r=new FileReader(); r.onload=ev=>{ const i=new Image(); i.onload=()=>{window.occlusionImg=i;}; i.src=ev.target.result; }; r.readAsDataURL(f);
+}
+
+// Corner dragging on canvas
+canvas.addEventListener('pointerdown', e=>{
+  if(!window.perspMode||!window.persp)return;
+  const r=canvas.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(canvas.width/r.width);
+  const my=(e.clientY-r.top)*(canvas.height/r.height);
+  const W=canvas.width,H=canvas.height;
+  const cs={tl:window.persp.tl,tr:window.persp.tr,br:window.persp.br,bl:window.persp.bl};
+  let best=null,bestD=400;
+  for(const k in cs){ const px=cs[k][0]*W,py=cs[k][1]*H; const d=(px-mx)**2+(py-my)**2; if(d<bestD){bestD=d;best=k;} }
+  dragCorner=best;
+});
+canvas.addEventListener('pointermove', e=>{
+  if(!dragCorner)return;
+  const r=canvas.getBoundingClientRect();
+  const mx=(e.clientX-r.left)/r.width;
+  const my=(e.clientY-r.top)/r.height;
+  window.persp[dragCorner]=[Math.max(0,Math.min(1,mx)),Math.max(0,Math.min(1,my))];
+});
+canvas.addEventListener('pointerup', ()=>{ dragCorner=null; });
+canvas.addEventListener('pointerleave', ()=>{ dragCorner=null; });
+// ── END PERSPETIVA ─────────────────────────────────────────────
+
 // ── CRAWL SITE + GENERATE CONTENT ──────────────────────────────
 window.siteContent = null; // {brand, tagline, services:[], partners:[], contacts:{}, colors:{}}
 
@@ -356,7 +547,73 @@ async function crawlAndGenerate(){
 }
 // ── END CRAWL ──────────────────────────────────────────────────
 
-function exportPNG(){const l=document.createElement("a");l.download="led-mockup.png";l.href=canvas.toDataURL("image/png");l.click();}
+function exportPNG(){
+  if(!bgImg){alert('Carrega uma imagem primeiro.');return;}
+  const [vw,vh]=document.getElementById('res').value.split('x').map(Number);
+  // Re-render the full scene at target resolution (sharp, not upscaled)
+  const realCanvas=canvas, realCtx=ctx;
+  const off=document.createElement('canvas'); off.width=vw; off.height=vh;
+  // temporarily point global canvas/ctx to offscreen and redraw at full res
+  const savedW=canvas.width, savedH=canvas.height;
+  // Use a dedicated high-res draw by scaling drawing space
+  const octx=off.getContext('2d');
+  octx.imageSmoothingEnabled=true; octx.imageSmoothingQuality='high';
+  // Draw background at full res
+  octx.drawImage(bgImg,0,0,vw,vh);
+  // Redraw LED scene at full res via a temp swap
+  _drawAtRes(octx,vw,vh, (performance.now()-slideStart)/DURATIONS[current]);
+  const l=document.createElement("a");l.download="led-mockup-"+vw+"x"+vh+".png";l.href=off.toDataURL("image/png");l.click();
+}
+
+// Render the LED scene (frame, perspective slide, occlusion) at arbitrary resolution
+function _drawAtRes(octx, W, H, t){
+  const prevCtx=ctx, prevCanvas={width:canvas.width,height:canvas.height};
+  setActiveCtx(octx);
+  // monkey-use draw logic minimally: reuse getCorners with W/H
+  const corners=getCorners(W,H);
+  const fr=FRAME*W, dp=window.DEPTH*(W/1000);
+  const xs=[corners.tl[0],corners.tr[0],corners.br[0],corners.bl[0]];
+  const ys=[corners.tl[1],corners.tr[1],corners.br[1],corners.bl[1]];
+  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  const bw=maxX-minX,bh=maxY-minY;
+  octx.save();octx.shadowColor="rgba(0,0,0,0.55)";octx.shadowBlur=bw*0.05;octx.shadowOffsetX=dp*0.6;octx.shadowOffsetY=dp*1.4;octx.fillStyle="#000";
+  octx.beginPath();octx.moveTo(corners.tl[0]+fr,corners.tl[1]+fr);octx.lineTo(corners.tr[0]+fr,corners.tr[1]+fr);octx.lineTo(corners.br[0]+fr,corners.br[1]+fr);octx.lineTo(corners.bl[0]+fr,corners.bl[1]+fr);octx.closePath();octx.fill();octx.restore();
+  octx.fillStyle="#222";
+  octx.beginPath();octx.moveTo(corners.tl[0],corners.tl[1]);octx.lineTo(corners.tr[0],corners.tr[1]);octx.lineTo(corners.br[0],corners.br[1]);octx.lineTo(corners.bl[0],corners.bl[1]);octx.closePath();octx.fill();
+  // slide buffer
+  const SW=1600,SH=Math.round(SW*(bh/bw||0.5));
+  const buf=document.createElement('canvas');buf.width=SW;buf.height=SH;
+  const bctx=buf.getContext('2d');
+  const oc=ctx; setActiveCtx(bctx); bctx.setTransform(1,0,0,1,0,0); [s1,s2,s3,s4][current](0,0,SW,SH,t); setActiveCtx(octx);
+  // warp using octx
+  _warpTo(octx, buf, corners);
+  octx.setTransform(1,0,0,1,0,0);
+  if(window.occlusionImg) octx.drawImage(window.occlusionImg,0,0,W,H);
+  setActiveCtx(prevCtx);
+}
+function _warpTo(targetCtx, src, corners){
+  const N=14,sw=src.width,sh=src.height;
+  const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){
+    const u0=i/N,u1=(i+1)/N,v0=j/N,v1=(j+1)/N;
+    const top0=lerp(corners.tl,corners.tr,u0),bot0=lerp(corners.bl,corners.br,u0);
+    const top1=lerp(corners.tl,corners.tr,u1),bot1=lerp(corners.bl,corners.br,u1);
+    const d00=lerp(top0,bot0,v0),d10=lerp(top1,bot1,v0),d01=lerp(top0,bot0,v1),d11=lerp(top1,bot1,v1);
+    const sx=u0*sw,sy=v0*sh,sdw=(u1-u0)*sw,sdh=(v1-v0)*sh;
+    _triTo(targetCtx,src,[sx,sy],[sx+sdw,sy],[sx,sy+sdh],d00,d10,d01);
+    _triTo(targetCtx,src,[sx+sdw,sy],[sx,sy+sdh],[sx+sdw,sy+sdh],d10,d01,d11);
+  }
+}
+function _triTo(tc,img,s0,s1,s2,d0,d1,d2){
+  tc.save();tc.beginPath();tc.moveTo(d0[0],d0[1]);tc.lineTo(d1[0],d1[1]);tc.lineTo(d2[0],d2[1]);tc.closePath();tc.clip();
+  const den=(s1[0]-s0[0])*(s2[1]-s0[1])-(s2[0]-s0[0])*(s1[1]-s0[1]);if(Math.abs(den)<1e-6){tc.restore();return;}
+  const a=((d1[0]-d0[0])*(s2[1]-s0[1])-(d2[0]-d0[0])*(s1[1]-s0[1]))/den;
+  const b=((d2[0]-d0[0])*(s1[0]-s0[0])-(d1[0]-d0[0])*(s2[0]-s0[0]))/den;
+  const cc=((d1[1]-d0[1])*(s2[1]-s0[1])-(d2[1]-d0[1])*(s1[1]-s0[1]))/den;
+  const d=((d2[1]-d0[1])*(s1[0]-s0[0])-(d1[1]-d0[1])*(s2[0]-s0[0]))/den;
+  const e=d0[0]-a*s0[0]-b*s0[1],f=d0[1]-cc*s0[0]-d*s0[1];
+  tc.setTransform(a,cc,b,d,e,f);tc.drawImage(img,0,0);tc.restore();
+}
 
 // ── VIDEO EXPORT ──────────────────────────────────────────────
 async function exportVideo(){
