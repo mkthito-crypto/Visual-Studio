@@ -1,3 +1,95 @@
+// ── RENDERIZADOR UNIFICADO (usado por preview E export) ──────────
+// Desenha a cena completa: fundo, sombra, faces 3D, moldura, slide em perspetiva, oclusão.
+function _renderScene(octx, W, H, t){
+  octx.setTransform(1,0,0,1,0,0);
+  octx.clearRect(0,0,W,H);
+  // Fundo na resolução nativa (sem upscale)
+  octx.drawImage(bgImg,0,0,W,H);
+
+  const corners=_cornersFor(W,H);
+  const fr=FRAME*W, dp=window.DEPTH*(W/1000);
+  const xs=[corners.tl[0],corners.tr[0],corners.br[0],corners.bl[0]];
+  const ys=[corners.tl[1],corners.tr[1],corners.br[1],corners.bl[1]];
+  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  const bw=maxX-minX,bh=maxY-minY;
+
+  // Sombra projetada (segue a direção da profundidade)
+  const [sox,soy]=depthVec(dp);
+  octx.save();
+  octx.shadowColor="rgba(0,0,0,0.55)";octx.shadowBlur=bw*0.05;
+  octx.shadowOffsetX=sox*0.8;octx.shadowOffsetY=Math.abs(soy)*1.2+dp*0.5;
+  octx.fillStyle="#000";
+  octx.beginPath();
+  octx.moveTo(corners.tl[0]-fr,corners.tl[1]-fr);octx.lineTo(corners.tr[0]+fr,corners.tr[1]-fr);
+  octx.lineTo(corners.br[0]+fr,corners.br[1]+fr);octx.lineTo(corners.bl[0]-fr,corners.bl[1]+fr);
+  octx.closePath();octx.fill();
+  octx.restore();
+
+  // Faces 3D (extrusão direcional)
+  const [ox,oy]=depthVec(dp);
+  draw3DFaces(octx, corners, ox, oy);
+
+  // Moldura escura
+  octx.fillStyle="#222";
+  octx.beginPath();
+  octx.moveTo(corners.tl[0]-fr,corners.tl[1]-fr);octx.lineTo(corners.tr[0]+fr,corners.tr[1]-fr);
+  octx.lineTo(corners.br[0]+fr,corners.br[1]+fr);octx.lineTo(corners.bl[0]-fr,corners.bl[1]+fr);
+  octx.closePath();octx.fill();
+
+  // Slide content -> buffer de alta resolução -> warp para o quad
+  const SW=Math.max(1600, Math.round(bw*2)), SH=Math.round(SW*(bh/bw||0.5));
+  const buf=document.createElement('canvas');buf.width=SW;buf.height=SH;
+  const bctx=buf.getContext('2d');
+  const prev=ctx; setActiveCtx(bctx); bctx.setTransform(1,0,0,1,0,0);
+  [s1,s2,s3,s4][current](0,0,SW,SH,t);
+  setActiveCtx(prev);
+  _warp(octx, buf, corners);
+  octx.setTransform(1,0,0,1,0,0);
+
+  // Camada de oclusão (elementos à frente)
+  if(window.occlusionImg) octx.drawImage(window.occlusionImg,0,0,W,H);
+
+  // Glow projetado
+  const cxm=(corners.bl[0]+corners.br[0])/2, cym=(corners.bl[1]+corners.br[1])/2;
+  const gg=octx.createRadialGradient(cxm,cym,0,cxm,cym,bw*0.5);
+  gg.addColorStop(0,"rgba(40,90,160,0.06)");gg.addColorStop(1,"rgba(0,0,0,0)");
+  octx.fillStyle=gg;octx.fillRect(minX-bw*0.2,maxY,bw*1.4,bw*0.4);
+}
+
+// Corners for a given target resolution (normalized -> pixels)
+function _cornersFor(W,H){
+  if(window.persp){
+    return {tl:[window.persp.tl[0]*W,window.persp.tl[1]*H],tr:[window.persp.tr[0]*W,window.persp.tr[1]*H],
+      br:[window.persp.br[0]*W,window.persp.br[1]*H],bl:[window.persp.bl[0]*W,window.persp.bl[1]*H]};
+  }
+  const lx=window.LX*W,ly=window.LY*H,lw=window.LW*W,lh=window.LH*H;
+  return {tl:[lx,ly],tr:[lx+lw,ly],br:[lx+lw,ly+lh],bl:[lx,ly+lh]};
+}
+
+function _warp(targetCtx, src, corners){
+  const N=16,sw=src.width,sh=src.height;
+  const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){
+    const u0=i/N,u1=(i+1)/N,v0=j/N,v1=(j+1)/N;
+    const top0=lerp(corners.tl,corners.tr,u0),bot0=lerp(corners.bl,corners.br,u0);
+    const top1=lerp(corners.tl,corners.tr,u1),bot1=lerp(corners.bl,corners.br,u1);
+    const d00=lerp(top0,bot0,v0),d10=lerp(top1,bot1,v0),d01=lerp(top0,bot0,v1),d11=lerp(top1,bot1,v1);
+    const sx=u0*sw,sy=v0*sh,sdw=(u1-u0)*sw,sdh=(v1-v0)*sh;
+    _tri(targetCtx,src,[sx,sy],[sx+sdw,sy],[sx,sy+sdh],d00,d10,d01);
+    _tri(targetCtx,src,[sx+sdw,sy],[sx,sy+sdh],[sx+sdw,sy+sdh],d10,d01,d11);
+  }
+}
+function _tri(tc,img,s0,s1,s2,d0,d1,d2){
+  tc.save();tc.beginPath();tc.moveTo(d0[0],d0[1]);tc.lineTo(d1[0],d1[1]);tc.lineTo(d2[0],d2[1]);tc.closePath();tc.clip();
+  const den=(s1[0]-s0[0])*(s2[1]-s0[1])-(s2[0]-s0[0])*(s1[1]-s0[1]);if(Math.abs(den)<1e-6){tc.restore();return;}
+  const a=((d1[0]-d0[0])*(s2[1]-s0[1])-(d2[0]-d0[0])*(s1[1]-s0[1]))/den;
+  const b=((d2[0]-d0[0])*(s1[0]-s0[0])-(d1[0]-d0[0])*(s2[0]-s0[0]))/den;
+  const cc=((d1[1]-d0[1])*(s2[1]-s0[1])-(d2[1]-d0[1])*(s1[1]-s0[1]))/den;
+  const d=((d2[1]-d0[1])*(s1[0]-s0[0])-(d1[1]-d0[1])*(s2[0]-s0[0]))/den;
+  const e=d0[0]-a*s0[0]-b*s0[1],f=d0[1]-cc*s0[0]-d*s0[1];
+  tc.setTransform(a,cc,b,d,e,f);tc.drawImage(img,0,0);tc.restore();
+}
+
 <!DOCTYPE html>
 <html lang="pt">
 <head>
@@ -138,6 +230,13 @@
       <span class="pos-label">H%</span><input type="range" min="2" max="40" step="0.2" value="7.3" oninput="upd('h',this.value)" id="slH"><span id="vH">7.3</span>
       <span class="pos-label">3D</span><input type="range" min="0" max="20" step="0.5" value="9" oninput="upd('d',this.value)" id="slD"><span id="vD">9</span>
       <button class="act" style="padding:5px 10px;" onclick="togglePersp()" id="perspBtn">⟁ Perspetiva</button>
+      <span class="pos-label">Lado 3D</span>
+      <select id="depthDir" onchange="window.DEPTH_DIR=this.value" style="width:auto;padding:4px 8px;font-size:10px;">
+        <option value="right">→ Direita</option>
+        <option value="left">← Esquerda</option>
+        <option value="up">↑ Cima</option>
+        <option value="down">↓ Baixo</option>
+      </select>
     </div>
   </div>
 </div>
@@ -155,6 +254,38 @@ const BLUE="#0a4a9e", ORANGE="#e8662a";
 window.BRAND_BLUE=null; window.BRAND_ORANGE=null;
 function BL(){return window.BRAND_BLUE||BLUE;} function OR(){return window.BRAND_ORANGE||ORANGE;}
 
+function depthVec(dp){
+  switch(window.DEPTH_DIR){
+    case "left":  return [-dp, dp*0.4];
+    case "up":    return [dp*0.3, -dp];
+    case "down":  return [dp*0.3, dp];
+    case "right":
+    default:      return [dp, dp*0.4];
+  }
+}
+
+// Draw 3D extrusion faces for a quad, given depth vector [ox,oy]
+function draw3DFaces(c2x, corners, ox, oy){
+  // Determine which two edges to extrude based on depth direction
+  const dir=window.DEPTH_DIR;
+  c2x.fillStyle="#0d0d0d";
+  // Helper to draw an extruded face from edge p1-p2
+  const face=(p1,p2,shade)=>{
+    c2x.fillStyle=shade;
+    c2x.beginPath();
+    c2x.moveTo(p1[0],p1[1]);
+    c2x.lineTo(p1[0]+ox,p1[1]+oy);
+    c2x.lineTo(p2[0]+ox,p2[1]+oy);
+    c2x.lineTo(p2[0],p2[1]);
+    c2x.closePath();c2x.fill();
+  };
+  const {tl,tr,br,bl}=corners;
+  if(dir==="right"){ face(tr,br,"#0d0d0d"); face(bl,br,"#161616"); }
+  else if(dir==="left"){ face(tl,bl,"#0d0d0d"); face(bl,br,"#161616"); }
+  else if(dir==="up"){ face(tl,tr,"#0d0d0d"); face(tr,br,"#141414"); }
+  else if(dir==="down"){ face(bl,br,"#0d0d0d"); face(tr,br,"#141414"); }
+}
+
 function getCorners(W,H){
   if(window.persp){
     return {
@@ -168,46 +299,8 @@ function getCorners(W,H){
   return { tl:[lx,ly], tr:[lx+lw,ly], br:[lx+lw,ly+lh], bl:[lx,ly+lh] };
 }
 
-// Draw an image (the rendered LED slide) mapped onto 4 corners via triangle subdivision
-function drawPerspImage(src, corners){
-  // src is a canvas with the slide. Map to quad using 2 triangles affine approximation grid.
-  const N=12; // subdivisions for smoother perspective
-  const sw=src.width, sh=src.height;
-  function lerp(a,b,t){return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];}
-  for(let i=0;i<N;i++){
-    for(let j=0;j<N;j++){
-      const u0=i/N,u1=(i+1)/N,v0=j/N,v1=(j+1)/N;
-      // dest points (bilinear on quad)
-      const top0=lerp(corners.tl,corners.tr,u0), bot0=lerp(corners.bl,corners.br,u0);
-      const top1=lerp(corners.tl,corners.tr,u1), bot1=lerp(corners.bl,corners.br,u1);
-      const d00=lerp(top0,bot0,v0), d10=lerp(top1,bot1,v0), d01=lerp(top0,bot0,v1), d11=lerp(top1,bot1,v1);
-      // src rect
-      const sx=u0*sw, sy=v0*sh, sdw=(u1-u0)*sw, sdh=(v1-v0)*sh;
-      // draw via two triangles
-      drawTri(src, [sx,sy],[sx+sdw,sy],[sx,sy+sdh], d00,d10,d01);
-      drawTri(src, [sx+sdw,sy],[sx,sy+sdh],[sx+sdw,sy+sdh], d10,d01,d11);
-    }
-  }
-}
-function drawTri(img, s0,s1,s2, d0,d1,d2){
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(d0[0],d0[1]);ctx.lineTo(d1[0],d1[1]);ctx.lineTo(d2[0],d2[1]);ctx.closePath();ctx.clip();
-  // affine transform mapping src triangle -> dest triangle
-  const denom=(s1[0]-s0[0])*(s2[1]-s0[1])-(s2[0]-s0[0])*(s1[1]-s0[1]);
-  if(Math.abs(denom)<1e-6){ctx.restore();return;}
-  const a=((d1[0]-d0[0])*(s2[1]-s0[1])-(d2[0]-d0[0])*(s1[1]-s0[1]))/denom;
-  const b=((d2[0]-d0[0])*(s1[0]-s0[0])-(d1[0]-d0[0])*(s2[0]-s0[0]))/denom;
-  const cc=((d1[1]-d0[1])*(s2[1]-s0[1])-(d2[1]-d0[1])*(s1[1]-s0[1]))/denom;
-  const d=((d2[1]-d0[1])*(s1[0]-s0[0])-(d1[1]-d0[1])*(s2[0]-s0[0]))/denom;
-  const e=d0[0]-a*s0[0]-b*s0[1];
-  const f=d0[1]-cc*s0[0]-d*s0[1];
-  ctx.setTransform(a,cc,b,d,e,f);
-  ctx.drawImage(img,0,0);
-  ctx.restore();
-}
 
-window.LX=0.195; window.LY=0.352; window.LW=0.56; window.LH=0.073; window.DEPTH=9;
+window.LX=0.195; window.LY=0.352; window.LW=0.56; window.LH=0.073; window.DEPTH=9; window.DEPTH_DIR="right"; // right|left|up|down
 // Perspective: 4 corners (normalized 0-1). Derived from LX/LY/LW/LH initially.
 window.persp=null; // {tl:[x,y],tr:[],br:[],bl:[]} when active
 window.perspMode=false;
@@ -292,71 +385,10 @@ async function aiPosition(){
 
 function draw(t){
   const W=canvas.width,H=canvas.height;
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,W,H);
-  ctx.drawImage(bgImg,0,0,W,H);
-
-  const corners=getCorners(W,H);
-  const fr=FRAME*W, dp=window.DEPTH*(W/1000);
-
-  // bounding box of the quad (for frame/shadow approximation)
-  const xs=[corners.tl[0],corners.tr[0],corners.br[0],corners.bl[0]];
-  const ys=[corners.tl[1],corners.tr[1],corners.br[1],corners.bl[1]];
-  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
-  const bw=maxX-minX, bh=maxY-minY;
-
-  // Drop shadow (quad)
-  ctx.save();
-  ctx.shadowColor="rgba(0,0,0,0.55)";ctx.shadowBlur=bw*0.05;ctx.shadowOffsetX=dp*0.6;ctx.shadowOffsetY=dp*1.4;
-  ctx.fillStyle="#000";
-  quadPath(corners,-fr); ctx.fill();
-  ctx.restore();
-
-  // 3D extrusion faces (right + bottom) following the quad edges
-  ctx.fillStyle="#0d0d0d";
-  ctx.beginPath();
-  ctx.moveTo(corners.tr[0],corners.tr[1]);
-  ctx.lineTo(corners.tr[0]+dp,corners.tr[1]+dp);
-  ctx.lineTo(corners.br[0]+dp,corners.br[1]+dp);
-  ctx.lineTo(corners.br[0],corners.br[1]);
-  ctx.closePath();ctx.fill();
-  ctx.fillStyle="#161616";
-  ctx.beginPath();
-  ctx.moveTo(corners.bl[0],corners.bl[1]);
-  ctx.lineTo(corners.bl[0]+dp,corners.bl[1]+dp);
-  ctx.lineTo(corners.br[0]+dp,corners.br[1]+dp);
-  ctx.lineTo(corners.br[0],corners.br[1]);
-  ctx.closePath();ctx.fill();
-
-  // Frame (thin dark) — slightly expanded quad
-  ctx.fillStyle="#222";
-  quadPath(corners,-fr); ctx.fill();
-
-  // Render the slide content to an offscreen canvas at fixed res, then warp onto quad
-  const SW=1200, SH=Math.round(SW*(bh/bw||0.5));
-  if(!window._slideBuf){window._slideBuf=document.createElement('canvas');}
-  const buf=window._slideBuf; buf.width=SW; buf.height=SH;
-  const bctx=buf.getContext('2d');
-  // temporarily render slide into buffer using same renderers (they take ctx)
-  const realCtx=ctx; window._renderToBuf(bctx,SW,SH,t);
-
-  drawPerspImage(buf, corners);
-  ctx.setTransform(1,0,0,1,0,0);
-
-  // Occlusion layer — elements painted in front (trees/poles/people)
-  if(window.occlusionImg){
-    ctx.drawImage(window.occlusionImg,0,0,W,H);
-  }
-
-  // Projected glow below
-  ctx.fillStyle="rgba(40,90,160,0.05)";
-  const cxm=(corners.bl[0]+corners.br[0])/2, cym=(corners.bl[1]+corners.br[1])/2;
-  const gg=ctx.createRadialGradient(cxm,cym,0,cxm,cym,bw*0.5);
-  gg.addColorStop(0,"rgba(40,90,160,0.06)");gg.addColorStop(1,"rgba(0,0,0,0)");
-  ctx.fillStyle=gg; ctx.fillRect(minX-bw*0.2,maxY,bw*1.4,bw*0.4);
-
-  // Draw corner handles in perspective mode
+  _renderScene(ctx, W, H, t);
+  // Corner handles (preview only, in perspective mode)
   if(window.perspMode){
+    const corners=_cornersFor(W,H);
     [corners.tl,corners.tr,corners.br,corners.bl].forEach((p,i)=>{
       ctx.beginPath();ctx.arc(p[0],p[1],8,0,Math.PI*2);
       ctx.fillStyle="#DC6339";ctx.fill();ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();
@@ -366,25 +398,7 @@ function draw(t){
   }
 }
 
-function quadPath(c,expand){
-  // expand outward by 'expand' px (negative = outward for frame)
-  const e=expand||0;
-  ctx.beginPath();
-  ctx.moveTo(c.tl[0]-e,c.tl[1]-e);
-  ctx.lineTo(c.tr[0]+e,c.tr[1]-e);
-  ctx.lineTo(c.br[0]+e,c.br[1]+e);
-  ctx.lineTo(c.bl[0]-e,c.bl[1]+e);
-  ctx.closePath();
-}
 
-// Render current slide into an arbitrary context/size (for the perspective buffer)
-window._renderToBuf=function(bctx,W,H,t){
-  const origCtx=ctx;
-  setActiveCtx(bctx);
-  bctx.setTransform(1,0,0,1,0,0);
-  [s1,s2,s3,s4][current](0,0,W,H,t);
-  setActiveCtx(origCtx);
-};
 
 function ease(t){return t<0.5?2*t*t:-1+(4-2*t)*t;} function fIn(t,d,u){return Math.max(0,Math.min(1,(t-d)/u));}
 
@@ -549,70 +563,18 @@ async function crawlAndGenerate(){
 
 function exportPNG(){
   if(!bgImg){alert('Carrega uma imagem primeiro.');return;}
-  const [vw,vh]=document.getElementById('res').value.split('x').map(Number);
-  // Re-render the full scene at target resolution (sharp, not upscaled)
-  const realCanvas=canvas, realCtx=ctx;
+  // Exporta na RESOLUÇÃO NATIVA da imagem (sem upscale -> sem pixelização)
+  const vw=bgImg.naturalWidth||bgImg.width;
+  const vh=bgImg.naturalHeight||bgImg.height;
   const off=document.createElement('canvas'); off.width=vw; off.height=vh;
-  // temporarily point global canvas/ctx to offscreen and redraw at full res
-  const savedW=canvas.width, savedH=canvas.height;
-  // Use a dedicated high-res draw by scaling drawing space
   const octx=off.getContext('2d');
   octx.imageSmoothingEnabled=true; octx.imageSmoothingQuality='high';
-  // Draw background at full res
-  octx.drawImage(bgImg,0,0,vw,vh);
-  // Redraw LED scene at full res via a temp swap
-  _drawAtRes(octx,vw,vh, (performance.now()-slideStart)/DURATIONS[current]);
-  const l=document.createElement("a");l.download="led-mockup-"+vw+"x"+vh+".png";l.href=off.toDataURL("image/png");l.click();
-}
-
-// Render the LED scene (frame, perspective slide, occlusion) at arbitrary resolution
-function _drawAtRes(octx, W, H, t){
-  const prevCtx=ctx, prevCanvas={width:canvas.width,height:canvas.height};
-  setActiveCtx(octx);
-  // monkey-use draw logic minimally: reuse getCorners with W/H
-  const corners=getCorners(W,H);
-  const fr=FRAME*W, dp=window.DEPTH*(W/1000);
-  const xs=[corners.tl[0],corners.tr[0],corners.br[0],corners.bl[0]];
-  const ys=[corners.tl[1],corners.tr[1],corners.br[1],corners.bl[1]];
-  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
-  const bw=maxX-minX,bh=maxY-minY;
-  octx.save();octx.shadowColor="rgba(0,0,0,0.55)";octx.shadowBlur=bw*0.05;octx.shadowOffsetX=dp*0.6;octx.shadowOffsetY=dp*1.4;octx.fillStyle="#000";
-  octx.beginPath();octx.moveTo(corners.tl[0]+fr,corners.tl[1]+fr);octx.lineTo(corners.tr[0]+fr,corners.tr[1]+fr);octx.lineTo(corners.br[0]+fr,corners.br[1]+fr);octx.lineTo(corners.bl[0]+fr,corners.bl[1]+fr);octx.closePath();octx.fill();octx.restore();
-  octx.fillStyle="#222";
-  octx.beginPath();octx.moveTo(corners.tl[0],corners.tl[1]);octx.lineTo(corners.tr[0],corners.tr[1]);octx.lineTo(corners.br[0],corners.br[1]);octx.lineTo(corners.bl[0],corners.bl[1]);octx.closePath();octx.fill();
-  // slide buffer
-  const SW=1600,SH=Math.round(SW*(bh/bw||0.5));
-  const buf=document.createElement('canvas');buf.width=SW;buf.height=SH;
-  const bctx=buf.getContext('2d');
-  const oc=ctx; setActiveCtx(bctx); bctx.setTransform(1,0,0,1,0,0); [s1,s2,s3,s4][current](0,0,SW,SH,t); setActiveCtx(octx);
-  // warp using octx
-  _warpTo(octx, buf, corners);
-  octx.setTransform(1,0,0,1,0,0);
-  if(window.occlusionImg) octx.drawImage(window.occlusionImg,0,0,W,H);
-  setActiveCtx(prevCtx);
-}
-function _warpTo(targetCtx, src, corners){
-  const N=14,sw=src.width,sh=src.height;
-  const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
-  for(let i=0;i<N;i++)for(let j=0;j<N;j++){
-    const u0=i/N,u1=(i+1)/N,v0=j/N,v1=(j+1)/N;
-    const top0=lerp(corners.tl,corners.tr,u0),bot0=lerp(corners.bl,corners.br,u0);
-    const top1=lerp(corners.tl,corners.tr,u1),bot1=lerp(corners.bl,corners.br,u1);
-    const d00=lerp(top0,bot0,v0),d10=lerp(top1,bot1,v0),d01=lerp(top0,bot0,v1),d11=lerp(top1,bot1,v1);
-    const sx=u0*sw,sy=v0*sh,sdw=(u1-u0)*sw,sdh=(v1-v0)*sh;
-    _triTo(targetCtx,src,[sx,sy],[sx+sdw,sy],[sx,sy+sdh],d00,d10,d01);
-    _triTo(targetCtx,src,[sx+sdw,sy],[sx,sy+sdh],[sx+sdw,sy+sdh],d10,d01,d11);
-  }
-}
-function _triTo(tc,img,s0,s1,s2,d0,d1,d2){
-  tc.save();tc.beginPath();tc.moveTo(d0[0],d0[1]);tc.lineTo(d1[0],d1[1]);tc.lineTo(d2[0],d2[1]);tc.closePath();tc.clip();
-  const den=(s1[0]-s0[0])*(s2[1]-s0[1])-(s2[0]-s0[0])*(s1[1]-s0[1]);if(Math.abs(den)<1e-6){tc.restore();return;}
-  const a=((d1[0]-d0[0])*(s2[1]-s0[1])-(d2[0]-d0[0])*(s1[1]-s0[1]))/den;
-  const b=((d2[0]-d0[0])*(s1[0]-s0[0])-(d1[0]-d0[0])*(s2[0]-s0[0]))/den;
-  const cc=((d1[1]-d0[1])*(s2[1]-s0[1])-(d2[1]-d0[1])*(s1[1]-s0[1]))/den;
-  const d=((d2[1]-d0[1])*(s1[0]-s0[0])-(d1[1]-d0[1])*(s2[0]-s0[0]))/den;
-  const e=d0[0]-a*s0[0]-b*s0[1],f=d0[1]-cc*s0[0]-d*s0[1];
-  tc.setTransform(a,cc,b,d,e,f);tc.drawImage(img,0,0);tc.restore();
+  const t=(performance.now()-slideStart)/DURATIONS[current];
+  _renderScene(octx, vw, vh, t);
+  const l=document.createElement("a");
+  l.download="led-mockup-"+vw+"x"+vh+".png";
+  l.href=off.toDataURL("image/png");
+  l.click();
 }
 
 // ── VIDEO EXPORT ──────────────────────────────────────────────
