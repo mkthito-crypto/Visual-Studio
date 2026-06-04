@@ -133,6 +133,7 @@ function _tri(tc,img,s0,s1,s2,d0,d1,d2){
   .overlay.on{display:flex;}
   .ring{width:50px;height:50px;border:3px solid #333;border-top-color:var(--orange);border-radius:50%;animation:spin .8s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
   .ov-text{font-family:'Bebas Neue';font-size:18px;color:#fff;}
   .ov-sub{font-size:11px;color:var(--muted);max-width:320px;text-align:center;line-height:1.6;}
   video{max-width:400px;border-radius:6px;margin-top:8px;}
@@ -153,9 +154,18 @@ function _tri(tc,img,s0,s1,s2,d0,d1,d2){
       <div class="fname" id="facadeName"></div>
       <label>Descreve onde vai o LED</label>
       <input type="text" id="desc" placeholder="ex: painel central acima do portão">
-      <label>Chave API Anthropic (posicionamento IA)</label>
-      <input type="password" id="apiKey" placeholder="sk-ant-...">
-      <button class="act" style="width:100%;margin-top:8px;" onclick="aiPosition()">🤖 Posicionar com IA</button>
+      <label>Chave API Google Gemini</label>
+      <div style="position:relative;">
+        <input type="password" id="apiKey" placeholder="AIza..." oninput="resetKeyStatus()" style="padding-right:38px;">
+        <button onclick="toggleKey()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;" id="keyEye">👁</button>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+        <button class="act" style="flex:1;" onclick="testApiKey()">🔑 Testar chave</button>
+        <div id="keyStatus" style="display:flex;align-items:center;gap:5px;padding:0 10px;font-size:10px;color:var(--muted);border:1px solid var(--border);border-radius:6px;white-space:nowrap;min-height:30px;"><span id="keyDot" style="width:7px;height:7px;border-radius:50%;background:#666;display:inline-block;"></span><span id="keyStatusText">não testada</span></div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">Obtém em aistudio.google.com/apikey. Fica só no browser.</div>
+      <div class="divider"></div>
+      <button class="act" style="width:100%;" onclick="aiPosition()">🤖 Posicionar LED com IA</button>
       <div class="status" id="posStatus"></div>
     </div>
 
@@ -182,7 +192,7 @@ function _tri(tc,img,s0,s1,s2,d0,d1,d2){
       <input type="text" id="siteUrl" placeholder="ex: horaciocosta.pt">
       <button class="act" style="width:100%;margin-top:8px;" onclick="crawlAndGenerate()" id="crawlBtn">🌐 Analisar site e gerar conteúdo</button>
       <div class="status" id="crawlStatus"></div>
-      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">Faz crawl ao site, extrai serviços, contactos e cores, e o Claude adapta os slides automaticamente. Requer a chave API acima.</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">Faz crawl ao site, extrai serviços, contactos e cores, e o Claude adapta os slides automaticamente. Requer a chave Gemini acima.</div>
     </div>
 
     <div class="panel" style="margin-top:14px;">
@@ -252,6 +262,42 @@ const DEFAULT_B64 = null; // imagem carregada pelo utilizador
 const FRAME=0.0025;
 const BLUE="#0a4a9e", ORANGE="#e8662a";
 window.BRAND_BLUE=null; window.BRAND_ORANGE=null;
+const GEMINI_MODEL="gemini-2.5-flash"; // modelo Gemini (grátis no free tier)
+
+function toggleKey(){
+  const inp=document.getElementById('apiKey'),eye=document.getElementById('keyEye');
+  if(inp.type==='password'){inp.type='text';eye.textContent='🙈';}else{inp.type='password';eye.textContent='👁';}
+}
+function setKeyStatus(state,text){
+  const dot=document.getElementById('keyDot'),txt=document.getElementById('keyStatusText');
+  const colors={ok:'#3ddc84',err:'#ff6b6b',test:'#e8a33d',idle:'#666'};
+  dot.style.background=colors[state]||'#666';
+  if(state==='test')dot.style.animation='pulse 1s infinite';else dot.style.animation='';
+  txt.textContent=text;
+  txt.style.color=state==='ok'?'#3ddc84':state==='err'?'#ff6b6b':'#888';
+}
+function resetKeyStatus(){ setKeyStatus('idle','não testada'); }
+
+async function testApiKey(){
+  const key=document.getElementById('apiKey').value.trim();
+  if(!key){setKeyStatus('err','sem chave');return;}
+  setKeyStatus('test','a testar...');
+  try{
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+GEMINI_MODEL+':generateContent',{
+      method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},
+      body:JSON.stringify({contents:[{parts:[{text:'ping'}]}],generationConfig:{maxOutputTokens:5}})
+    });
+    if(r.ok){ setKeyStatus('ok','✓ ativa e a funcionar'); }
+    else{
+      const e=await r.json().catch(()=>({}));
+      const msg=e?.error?.message||'';
+      if(r.status===400&&msg.includes('API key not valid')) setKeyStatus('err','✗ chave inválida');
+      else if(r.status===429) setKeyStatus('err','✗ sem quota/limite atingido');
+      else if(r.status===403) setKeyStatus('err','✗ sem permissão');
+      else setKeyStatus('err','✗ erro '+r.status);
+    }
+  }catch(e){ setKeyStatus('err','✗ falha de ligação'); }
+}
 function BL(){return window.BRAND_BLUE||BLUE;} function OR(){return window.BRAND_ORANGE||ORANGE;}
 
 function depthVec(dp){
@@ -363,19 +409,26 @@ async function aiPosition(){
   const key=document.getElementById('apiKey').value.trim();
   const st=document.getElementById('posStatus');
   if(!desc){st.textContent='⚠ Descreve onde vai o LED.';st.className='status err';return;}
-  if(!key){st.textContent='⚠ Introduz a chave API.';st.className='status err';return;}
+  if(!key){st.textContent='⚠ Introduz a chave Gemini.';st.className='status err';return;}
   if(!currentFacadeDataUrl){st.textContent='⚠ Carrega uma imagem.';st.className='status err';return;}
-  st.textContent='🤖 Claude a analisar...';st.className='status';
+  st.textContent='🤖 Gemini a analisar...';st.className='status';
   try{
     const b64=currentFacadeDataUrl.split(',')[1];
     const mime=currentFacadeDataUrl.split(';')[0].split(':')[1];
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:300,messages:[{role:'user',content:[
-        {type:'image',source:{type:'base64',media_type:mime,data:b64}},
-        {type:'text',text:'Analisa a imagem e indica onde colocar um LED 2:1. Utilizador: "'+desc+'". Responde APENAS JSON: {"x_pct":0.XX,"y_pct":0.XX,"w_pct":0.XX,"h_pct":0.XX,"reasoning":"frase"}. Valores 0-1 da largura/altura. Garante x+w<0.98, y+h<0.98.'}
-      ]}]})});
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+GEMINI_MODEL+':generateContent',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-goog-api-key':key},
+      body:JSON.stringify({
+        contents:[{parts:[
+          {inline_data:{mime_type:mime,data:b64}},
+          {text:'Analisa a imagem e indica onde colocar um LED 2:1. Utilizador: "'+desc+'". Responde APENAS JSON sem markdown: {"x_pct":0.XX,"y_pct":0.XX,"w_pct":0.XX,"h_pct":0.XX,"reasoning":"frase"}. Valores 0-1 da largura/altura. Garante x+w<0.98, y+h<0.98.'}
+        ]}],
+        generationConfig:{temperature:0.2,maxOutputTokens:300}
+      })
+    });
     if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||'Erro '+r.status);}
-    const d=await r.json(); const raw=d.content.find(b=>b.type==='text')?.text||'';
+    const d=await r.json();
+    const raw=d.candidates?.[0]?.content?.parts?.[0]?.text||'';
     const p=JSON.parse(raw.replace(/```json|```/g,'').trim());
     window.LX=p.x_pct;window.LY=p.y_pct;window.LW=p.w_pct;window.LH=p.h_pct;
     ['X','Y','W','H'].forEach((ax,i)=>{const v=[p.x_pct,p.y_pct,p.w_pct,p.h_pct][i]*100;document.getElementById('sl'+ax).value=v.toFixed(1);document.getElementById('v'+ax).textContent=v.toFixed(1);});
@@ -517,7 +570,7 @@ async function crawlAndGenerate(){
   const st=document.getElementById('crawlStatus');
   const btn=document.getElementById('crawlBtn');
   if(!url){st.textContent='⚠ Introduz o URL do site.';st.className='status err';return;}
-  if(!key){st.textContent='⚠ Introduz a chave API Anthropic (painel 1).';st.className='status err';return;}
+  if(!key){st.textContent='⚠ Introduz a chave Gemini (painel 1).';st.className='status err';return;}
 
   btn.disabled=true; st.textContent='🌐 A analisar o site...'; st.className='status';
   try{
@@ -526,7 +579,7 @@ async function crawlAndGenerate(){
     if(!cr.ok){const e=await cr.json().catch(()=>({}));throw new Error(e.error||'Erro crawl '+cr.status);}
     const site=await cr.json();
 
-    st.textContent='🤖 Claude a adaptar o conteúdo...';
+    st.textContent='🤖 Gemini a adaptar o conteúdo...';
 
     // 2. Claude generates slide content from crawled data
     const sys=`És um especialista em conteúdo para ecrãs LED. Recebes informação extraída do site de uma empresa e devolves conteúdo para 4 slides. Responde APENAS com JSON válido, sem markdown:
@@ -542,11 +595,16 @@ async function crawlAndGenerate(){
 }`;
     const usr=`Informação extraída do site:\n${site.summary}\n\nCores detectadas: ${(site.colors||[]).join(', ')}\nTheme color: ${site.themeColor||'n/a'}\n\nGera o conteúdo dos slides adaptado a esta empresa.`;
 
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,system:sys,messages:[{role:'user',content:usr}]})});
-    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||'Erro Claude '+r.status);}
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+GEMINI_MODEL+':generateContent',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-goog-api-key':key},
+      body:JSON.stringify({
+        contents:[{parts:[{text:sys+'\n\n'+usr}]}],
+        generationConfig:{temperature:0.4,maxOutputTokens:600}
+      })});
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||'Erro Gemini '+r.status);}
     const d=await r.json();
-    const raw=d.content.find(b=>b.type==='text')?.text||'';
+    const raw=d.candidates?.[0]?.content?.parts?.[0]?.text||'';
     const gen=JSON.parse(raw.replace(/```json|```/g,'').trim());
 
     // 3. Store and apply
