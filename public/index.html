@@ -1,95 +1,3 @@
-// ── RENDERIZADOR UNIFICADO (usado por preview E export) ──────────
-// Desenha a cena completa: fundo, sombra, faces 3D, moldura, slide em perspetiva, oclusão.
-function _renderScene(octx, W, H, t){
-  octx.setTransform(1,0,0,1,0,0);
-  octx.clearRect(0,0,W,H);
-  // Fundo na resolução nativa (sem upscale)
-  octx.drawImage(bgImg,0,0,W,H);
-
-  const corners=_cornersFor(W,H);
-  const fr=FRAME*W, dp=window.DEPTH*(W/1000);
-  const xs=[corners.tl[0],corners.tr[0],corners.br[0],corners.bl[0]];
-  const ys=[corners.tl[1],corners.tr[1],corners.br[1],corners.bl[1]];
-  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
-  const bw=maxX-minX,bh=maxY-minY;
-
-  // Sombra projetada (segue a direção da profundidade)
-  const [sox,soy]=depthVec(dp);
-  octx.save();
-  octx.shadowColor="rgba(0,0,0,0.55)";octx.shadowBlur=bw*0.05;
-  octx.shadowOffsetX=sox*0.8;octx.shadowOffsetY=Math.abs(soy)*1.2+dp*0.5;
-  octx.fillStyle="#000";
-  octx.beginPath();
-  octx.moveTo(corners.tl[0]-fr,corners.tl[1]-fr);octx.lineTo(corners.tr[0]+fr,corners.tr[1]-fr);
-  octx.lineTo(corners.br[0]+fr,corners.br[1]+fr);octx.lineTo(corners.bl[0]-fr,corners.bl[1]+fr);
-  octx.closePath();octx.fill();
-  octx.restore();
-
-  // Faces 3D (extrusão direcional)
-  const [ox,oy]=depthVec(dp);
-  draw3DFaces(octx, corners, ox, oy);
-
-  // Moldura escura
-  octx.fillStyle="#222";
-  octx.beginPath();
-  octx.moveTo(corners.tl[0]-fr,corners.tl[1]-fr);octx.lineTo(corners.tr[0]+fr,corners.tr[1]-fr);
-  octx.lineTo(corners.br[0]+fr,corners.br[1]+fr);octx.lineTo(corners.bl[0]-fr,corners.bl[1]+fr);
-  octx.closePath();octx.fill();
-
-  // Slide content -> buffer de alta resolução -> warp para o quad
-  const SW=Math.max(1600, Math.round(bw*2)), SH=Math.round(SW*(bh/bw||0.5));
-  const buf=document.createElement('canvas');buf.width=SW;buf.height=SH;
-  const bctx=buf.getContext('2d');
-  const prev=ctx; setActiveCtx(bctx); bctx.setTransform(1,0,0,1,0,0);
-  [s1,s2,s3,s4][current](0,0,SW,SH,t);
-  setActiveCtx(prev);
-  _warp(octx, buf, corners);
-  octx.setTransform(1,0,0,1,0,0);
-
-  // Camada de oclusão (elementos à frente)
-  if(window.occlusionImg) octx.drawImage(window.occlusionImg,0,0,W,H);
-
-  // Glow projetado
-  const cxm=(corners.bl[0]+corners.br[0])/2, cym=(corners.bl[1]+corners.br[1])/2;
-  const gg=octx.createRadialGradient(cxm,cym,0,cxm,cym,bw*0.5);
-  gg.addColorStop(0,"rgba(40,90,160,0.06)");gg.addColorStop(1,"rgba(0,0,0,0)");
-  octx.fillStyle=gg;octx.fillRect(minX-bw*0.2,maxY,bw*1.4,bw*0.4);
-}
-
-// Corners for a given target resolution (normalized -> pixels)
-function _cornersFor(W,H){
-  if(window.persp){
-    return {tl:[window.persp.tl[0]*W,window.persp.tl[1]*H],tr:[window.persp.tr[0]*W,window.persp.tr[1]*H],
-      br:[window.persp.br[0]*W,window.persp.br[1]*H],bl:[window.persp.bl[0]*W,window.persp.bl[1]*H]};
-  }
-  const lx=window.LX*W,ly=window.LY*H,lw=window.LW*W,lh=window.LH*H;
-  return {tl:[lx,ly],tr:[lx+lw,ly],br:[lx+lw,ly+lh],bl:[lx,ly+lh]};
-}
-
-function _warp(targetCtx, src, corners){
-  const N=16,sw=src.width,sh=src.height;
-  const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
-  for(let i=0;i<N;i++)for(let j=0;j<N;j++){
-    const u0=i/N,u1=(i+1)/N,v0=j/N,v1=(j+1)/N;
-    const top0=lerp(corners.tl,corners.tr,u0),bot0=lerp(corners.bl,corners.br,u0);
-    const top1=lerp(corners.tl,corners.tr,u1),bot1=lerp(corners.bl,corners.br,u1);
-    const d00=lerp(top0,bot0,v0),d10=lerp(top1,bot1,v0),d01=lerp(top0,bot0,v1),d11=lerp(top1,bot1,v1);
-    const sx=u0*sw,sy=v0*sh,sdw=(u1-u0)*sw,sdh=(v1-v0)*sh;
-    _tri(targetCtx,src,[sx,sy],[sx+sdw,sy],[sx,sy+sdh],d00,d10,d01);
-    _tri(targetCtx,src,[sx+sdw,sy],[sx,sy+sdh],[sx+sdw,sy+sdh],d10,d01,d11);
-  }
-}
-function _tri(tc,img,s0,s1,s2,d0,d1,d2){
-  tc.save();tc.beginPath();tc.moveTo(d0[0],d0[1]);tc.lineTo(d1[0],d1[1]);tc.lineTo(d2[0],d2[1]);tc.closePath();tc.clip();
-  const den=(s1[0]-s0[0])*(s2[1]-s0[1])-(s2[0]-s0[0])*(s1[1]-s0[1]);if(Math.abs(den)<1e-6){tc.restore();return;}
-  const a=((d1[0]-d0[0])*(s2[1]-s0[1])-(d2[0]-d0[0])*(s1[1]-s0[1]))/den;
-  const b=((d2[0]-d0[0])*(s1[0]-s0[0])-(d1[0]-d0[0])*(s2[0]-s0[0]))/den;
-  const cc=((d1[1]-d0[1])*(s2[1]-s0[1])-(d2[1]-d0[1])*(s1[1]-s0[1]))/den;
-  const d=((d2[1]-d0[1])*(s1[0]-s0[0])-(d1[1]-d0[1])*(s2[0]-s0[0]))/den;
-  const e=d0[0]-a*s0[0]-b*s0[1],f=d0[1]-cc*s0[0]-d*s0[1];
-  tc.setTransform(a,cc,b,d,e,f);tc.drawImage(img,0,0);tc.restore();
-}
-
 <!DOCTYPE html>
 <html lang="pt">
 <head>
@@ -258,6 +166,98 @@ function _tri(tc,img,s0,s1,s2,d0,d1,d2){
 </div>
 
 <script>
+// ── RENDERIZADOR UNIFICADO (usado por preview E export) ──────────
+// Desenha a cena completa: fundo, sombra, faces 3D, moldura, slide em perspetiva, oclusão.
+function _renderScene(octx, W, H, t){
+  octx.setTransform(1,0,0,1,0,0);
+  octx.clearRect(0,0,W,H);
+  // Fundo na resolução nativa (sem upscale)
+  octx.drawImage(bgImg,0,0,W,H);
+
+  const corners=_cornersFor(W,H);
+  const fr=FRAME*W, dp=window.DEPTH*(W/1000);
+  const xs=[corners.tl[0],corners.tr[0],corners.br[0],corners.bl[0]];
+  const ys=[corners.tl[1],corners.tr[1],corners.br[1],corners.bl[1]];
+  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  const bw=maxX-minX,bh=maxY-minY;
+
+  // Sombra projetada (segue a direção da profundidade)
+  const [sox,soy]=depthVec(dp);
+  octx.save();
+  octx.shadowColor="rgba(0,0,0,0.55)";octx.shadowBlur=bw*0.05;
+  octx.shadowOffsetX=sox*0.8;octx.shadowOffsetY=Math.abs(soy)*1.2+dp*0.5;
+  octx.fillStyle="#000";
+  octx.beginPath();
+  octx.moveTo(corners.tl[0]-fr,corners.tl[1]-fr);octx.lineTo(corners.tr[0]+fr,corners.tr[1]-fr);
+  octx.lineTo(corners.br[0]+fr,corners.br[1]+fr);octx.lineTo(corners.bl[0]-fr,corners.bl[1]+fr);
+  octx.closePath();octx.fill();
+  octx.restore();
+
+  // Faces 3D (extrusão direcional)
+  const [ox,oy]=depthVec(dp);
+  draw3DFaces(octx, corners, ox, oy);
+
+  // Moldura escura
+  octx.fillStyle="#222";
+  octx.beginPath();
+  octx.moveTo(corners.tl[0]-fr,corners.tl[1]-fr);octx.lineTo(corners.tr[0]+fr,corners.tr[1]-fr);
+  octx.lineTo(corners.br[0]+fr,corners.br[1]+fr);octx.lineTo(corners.bl[0]-fr,corners.bl[1]+fr);
+  octx.closePath();octx.fill();
+
+  // Slide content -> buffer de alta resolução -> warp para o quad
+  const SW=Math.max(1600, Math.round(bw*2)), SH=Math.round(SW*(bh/bw||0.5));
+  const buf=document.createElement('canvas');buf.width=SW;buf.height=SH;
+  const bctx=buf.getContext('2d');
+  const prev=ctx; setActiveCtx(bctx); bctx.setTransform(1,0,0,1,0,0);
+  [s1,s2,s3,s4][current](0,0,SW,SH,t);
+  setActiveCtx(prev);
+  _warp(octx, buf, corners);
+  octx.setTransform(1,0,0,1,0,0);
+
+  // Camada de oclusão (elementos à frente)
+  if(window.occlusionImg) octx.drawImage(window.occlusionImg,0,0,W,H);
+
+  // Glow projetado
+  const cxm=(corners.bl[0]+corners.br[0])/2, cym=(corners.bl[1]+corners.br[1])/2;
+  const gg=octx.createRadialGradient(cxm,cym,0,cxm,cym,bw*0.5);
+  gg.addColorStop(0,"rgba(40,90,160,0.06)");gg.addColorStop(1,"rgba(0,0,0,0)");
+  octx.fillStyle=gg;octx.fillRect(minX-bw*0.2,maxY,bw*1.4,bw*0.4);
+}
+
+// Corners for a given target resolution (normalized -> pixels)
+function _cornersFor(W,H){
+  if(window.persp){
+    return {tl:[window.persp.tl[0]*W,window.persp.tl[1]*H],tr:[window.persp.tr[0]*W,window.persp.tr[1]*H],
+      br:[window.persp.br[0]*W,window.persp.br[1]*H],bl:[window.persp.bl[0]*W,window.persp.bl[1]*H]};
+  }
+  const lx=window.LX*W,ly=window.LY*H,lw=window.LW*W,lh=window.LH*H;
+  return {tl:[lx,ly],tr:[lx+lw,ly],br:[lx+lw,ly+lh],bl:[lx,ly+lh]};
+}
+
+function _warp(targetCtx, src, corners){
+  const N=16,sw=src.width,sh=src.height;
+  const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){
+    const u0=i/N,u1=(i+1)/N,v0=j/N,v1=(j+1)/N;
+    const top0=lerp(corners.tl,corners.tr,u0),bot0=lerp(corners.bl,corners.br,u0);
+    const top1=lerp(corners.tl,corners.tr,u1),bot1=lerp(corners.bl,corners.br,u1);
+    const d00=lerp(top0,bot0,v0),d10=lerp(top1,bot1,v0),d01=lerp(top0,bot0,v1),d11=lerp(top1,bot1,v1);
+    const sx=u0*sw,sy=v0*sh,sdw=(u1-u0)*sw,sdh=(v1-v0)*sh;
+    _tri(targetCtx,src,[sx,sy],[sx+sdw,sy],[sx,sy+sdh],d00,d10,d01);
+    _tri(targetCtx,src,[sx+sdw,sy],[sx,sy+sdh],[sx+sdw,sy+sdh],d10,d01,d11);
+  }
+}
+function _tri(tc,img,s0,s1,s2,d0,d1,d2){
+  tc.save();tc.beginPath();tc.moveTo(d0[0],d0[1]);tc.lineTo(d1[0],d1[1]);tc.lineTo(d2[0],d2[1]);tc.closePath();tc.clip();
+  const den=(s1[0]-s0[0])*(s2[1]-s0[1])-(s2[0]-s0[0])*(s1[1]-s0[1]);if(Math.abs(den)<1e-6){tc.restore();return;}
+  const a=((d1[0]-d0[0])*(s2[1]-s0[1])-(d2[0]-d0[0])*(s1[1]-s0[1]))/den;
+  const b=((d2[0]-d0[0])*(s1[0]-s0[0])-(d1[0]-d0[0])*(s2[0]-s0[0]))/den;
+  const cc=((d1[1]-d0[1])*(s2[1]-s0[1])-(d2[1]-d0[1])*(s1[1]-s0[1]))/den;
+  const d=((d2[1]-d0[1])*(s1[0]-s0[0])-(d1[1]-d0[1])*(s2[0]-s0[0]))/den;
+  const e=d0[0]-a*s0[0]-b*s0[1],f=d0[1]-cc*s0[0]-d*s0[1];
+  tc.setTransform(a,cc,b,d,e,f);tc.drawImage(img,0,0);tc.restore();
+}
+
 const DEFAULT_B64 = null; // imagem carregada pelo utilizador
 const FRAME=0.0025;
 const BLUE="#0a4a9e", ORANGE="#e8662a";
