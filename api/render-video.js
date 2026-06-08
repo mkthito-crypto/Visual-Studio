@@ -127,7 +127,8 @@ export default async function handler(req, res) {
 
     const blob = await put(filename, videoBuffer, {
       access: 'public',
-      contentType: 'video/mp4'
+      contentType: 'video/mp4',
+      token: process.env.BLOB_READ_WRITE_TOKEN
     });
 
     res.status(200).json({
