@@ -1,19 +1,20 @@
 // api/render-video.js
 // Serverless function (Vercel) — recebe frames dos slides + intro/fecho MP4
-// e devolve o vídeo final concatenado.
+// e devolve o vídeo final concatenado e faz upload para o Vercel Blob.
 //
 // Fluxo:
-//  1. Recebe JSON: { frames: [dataURL,...], fps, introBase64?, outroBase64?, slideDurations: [] }
+//  1. Recebe JSON: { frames: [dataURL,...], fps, introBase64?, outroBase64? }
 //  2. Escreve frames em /tmp como PNG sequenciais
-//  3. FFmpeg: frames -> vídeo dos slides (com duração por slide)
+//  3. FFmpeg: frames -> vídeo dos slides
 //  4. Se houver intro/outro, concatena: intro + slides + outro
-//  5. Devolve MP4 em base64
+//  5. Faz upload para o Vercel Blob e devolve URL público
 
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { put } = require('@vercel/blob');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -118,13 +119,20 @@ export default async function handler(req, res) {
       );
     }
 
-    // 5. Ler e devolver
+    // 5. Upload para o Vercel Blob
     const videoBuffer = fs.readFileSync(finalVideo);
-    const videoBase64 = videoBuffer.toString('base64');
+
+    // Generate a unique filename
+    const filename = `led-mockup-${Date.now()}.mp4`;
+
+    const blob = await put(filename, videoBuffer, {
+      access: 'public',
+      contentType: 'video/mp4'
+    });
 
     res.status(200).json({
       success: true,
-      video: `data:video/mp4;base64,${videoBase64}`,
+      videoUrl: blob.url,
       size: videoBuffer.length
     });
 
