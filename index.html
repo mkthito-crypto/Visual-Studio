@@ -393,12 +393,11 @@ tControls.setMode('translate'); // Default
 
 // Handle window resizing
 function resize() {
-    if (!bgImg) return;
     const maxW = Math.min(window.innerWidth - 360, 1000);
-    const aspect = bgImg.width / bgImg.height;
-    const h = maxW / aspect;
+    const currAspect = bgImg ? bgImg.width / bgImg.height : aspect;
+    const h = maxW / currAspect;
     renderer.setSize(maxW, h);
-    camera.aspect = aspect;
+    camera.aspect = currAspect;
     camera.updateProjectionMatrix();
 
     // Ensure accurate aspect scaling
@@ -590,12 +589,19 @@ function setBg(imgEl, dataUrl){
 function startSlide(){ slideStart=performance.now(); document.getElementById('slideInfo').textContent="Slide "+(current+1)+"/4"; clearTimeout(timer); if(playing)timer=setTimeout(nextSlide,DURATIONS[current]); }
 
 function loop(ts){
-    if(!bgImg){animFrame=requestAnimationFrame(loop);return;}
-    const t=Math.min((ts-slideStart)/DURATIONS[current],1);
-    draw2DSlide(t);
-    canvasTexture.needsUpdate = true;
+    if(bgImg) {
+      const t=Math.min((ts-slideStart)/DURATIONS[current],1);
+      draw2DSlide(t);
+      canvasTexture.needsUpdate = true;
+    }
     renderer.render(scene, camera);
     animFrame=requestAnimationFrame(loop);
+}
+
+// Start rendering loop immediately so UI shows up
+resize();
+if(!animFrame) {
+  animFrame=requestAnimationFrame(loop);
 }
 
 // AI positioning
