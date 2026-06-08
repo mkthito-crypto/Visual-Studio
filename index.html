@@ -198,8 +198,8 @@
       <div class="fname" id="facadeName"></div>
       <label>Descreve onde vai o LED</label>
       <input type="text" id="desc" placeholder="ex: painel central acima do portão">
-      <label>Chave API Anthropic (posicionamento IA)</label>
-      <input type="password" id="apiKey" placeholder="sk-ant-...">
+      <label>Chave API Gemini (posicionamento IA & Web Crawl)</label>
+      <input type="password" id="apiKey" placeholder="AIzaSy...">
       <button class="act" style="width:100%;margin-top:8px;" onclick="aiPosition()">🤖 Posicionar com IA</button>
       <div class="status" id="posStatus"></div>
     </div>
@@ -220,7 +220,7 @@
       <input type="text" id="siteUrl" placeholder="ex: horaciocosta.pt">
       <button class="act" style="width:100%;margin-top:8px;" onclick="crawlAndGenerate()" id="crawlBtn">🌐 Analisar site e gerar conteúdo</button>
       <div class="status" id="crawlStatus"></div>
-      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">Faz crawl ao site, extrai serviços, contactos e cores, e o Claude adapta os slides automaticamente. Requer a chave API acima.</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">Faz crawl ao site, extrai serviços, contactos e cores, e o Gemini adapta os slides automaticamente. Requer a chave API acima.</div>
     </div>
 
     <div class="panel" style="margin-top:14px;">
@@ -607,17 +607,24 @@ async function aiPosition(){
   if(!desc){st.textContent='⚠ Descreve onde vai o LED.';st.className='status err';return;}
   if(!key){st.textContent='⚠ Introduz a chave API.';st.className='status err';return;}
   if(!currentFacadeDataUrl){st.textContent='⚠ Carrega uma imagem.';st.className='status err';return;}
-  st.textContent='🤖 Claude a analisar...';st.className='status';
+  st.textContent='🤖 Gemini a analisar...';st.className='status';
   try{
     const b64=currentFacadeDataUrl.split(',')[1];
     const mime=currentFacadeDataUrl.split(';')[0].split(':')[1];
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:300,messages:[{role:'user',content:[
-        {type:'image',source:{type:'base64',media_type:mime,data:b64}},
-        {type:'text',text:'Analisa a imagem e indica onde colocar um LED 2:1. Utilizador: "'+desc+'". Responde APENAS JSON: {"x_pct":0.XX,"y_pct":0.XX,"w_pct":0.XX,"h_pct":0.XX,"reasoning":"frase"}. Valores 0-1 da largura/altura. Garante x+w<0.98, y+h<0.98.'}
-      ]}]})});
-    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||'Erro '+r.status);}
-    const d=await r.json(); const raw=d.content.find(b=>b.type==='text')?.text||'';
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        contents: [{
+          parts:[
+            {text:'Analisa a imagem e indica onde colocar um LED 2:1. Utilizador: "'+desc+'". Responde APENAS com JSON: {"x_pct":0.XX,"y_pct":0.XX,"w_pct":0.XX,"h_pct":0.XX,"reasoning":"frase"}. Valores 0-1 da largura/altura. Garante x+w<0.98, y+h<0.98.'},
+            {inline_data:{mime_type:mime,data:b64}}
+          ]
+        }]
+      })
+    });
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||'Erro Gemini '+r.status);}
+    const d=await r.json();
+    const raw=d.candidates[0].content.parts[0].text||'';
     const p=JSON.parse(raw.replace(/```json|```/g,'').trim());
     window.LX=p.x_pct;window.LY=p.y_pct;window.LW=p.w_pct;window.LH=p.h_pct;
     ['X','Y','W','H'].forEach((ax,i)=>{const v=[p.x_pct,p.y_pct,p.w_pct,p.h_pct][i]*100;document.getElementById('sl'+ax).value=v.toFixed(1);document.getElementById('v'+ax).textContent=v.toFixed(1);});
@@ -715,10 +722,10 @@ window.crawlAndGenerate = async function crawlAndGenerate(){
     if(!cr.ok){const e=await cr.json().catch(()=>({}));throw new Error(e.error||'Erro crawl '+cr.status);}
     const site=await cr.json();
 
-    st.textContent='🤖 Claude a adaptar o conteúdo...';
+    st.textContent='🤖 Gemini a adaptar o conteúdo...';
 
-    // 2. Claude generates slide content from crawled data
-    const sys=`És um especialista em conteúdo para ecrãs LED. Recebes informação extraída do site de uma empresa e devolves conteúdo para 4 slides. Responde APENAS com JSON válido, sem markdown:
+    // 2. Gemini generates slide content from crawled data
+    const sys=`És um especialista em conteúdo para ecrãs LED. Recebes informação extraída do site de uma empresa e devolves conteúdo para 4 slides. Responde APENAS com JSON válido, sem formatação markdown à volta (responde o JSON cru):
 {
   "brand": "nome da empresa",
   "tagline": "slogan curto (máx 3 palavras)",
@@ -731,11 +738,16 @@ window.crawlAndGenerate = async function crawlAndGenerate(){
 }`;
     const usr=`Informação extraída do site:\n${site.summary}\n\nCores detectadas: ${(site.colors||[]).join(', ')}\nTheme color: ${site.themeColor||'n/a'}\n\nGera o conteúdo dos slides adaptado a esta empresa.`;
 
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,system:sys,messages:[{role:'user',content:usr}]})});
-    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||'Erro Claude '+r.status);}
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        system_instruction: { parts: [{text: sys}] },
+        contents: [{ role:'user', parts:[{text:usr}] }]
+      })
+    });
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e?.error?.message||'Erro Gemini '+r.status);}
     const d=await r.json();
-    const raw=d.content.find(b=>b.type==='text')?.text||'';
+    const raw=d.candidates[0].content.parts[0].text||'';
     const gen=JSON.parse(raw.replace(/```json|```/g,'').trim());
 
     // 3. Store and apply
